@@ -172,358 +172,137 @@ def visualize_predictions(model, dataset, num_samples=4, device='cuda', use_post
         # --- Handle different output structures ---
         is_tuple = isinstance(outputs, tuple)
         num_outputs = len(outputs) if is_tuple else 1
-        
-        # Default single output
-        core_preds = None
-        boundary_preds = None
-        
-        # Four-output model (CTO-Net)
-        if is_tuple and num_outputs == 4:
-            print("  (i) Detected 4-output model (CTO-Net). Visualizing all outputs.")
-            # o3, o2, o1, oe
-            o3_preds = torch.sigmoid(outputs[0]) > 0.5
-            o2_preds = torch.sigmoid(outputs[1]) > 0.5
-            o1_preds = torch.sigmoid(outputs[2]) > 0.5
-            oe_preds = torch.sigmoid(outputs[3]) > 0.5
-            
-            # Per analysis, o3 (outputs[0]) is the best semantic prediction.
-            # We will use it as the base for the final segmentation.
-            core_preds = o3_preds
-            boundary_preds = None # Not using a separate boundary for final combination
 
-        # Dual-output model
-        elif is_tuple and num_outputs > 1:
-            print("  (i) Detected 2-output model. Visualizing core and boundary.")
-            core_output, boundary_output = outputs[0], outputs[1]
-            core_preds = torch.sigmoid(core_output) > 0.5
-            boundary_preds = torch.sigmoid(boundary_output) > 0.5
-            
-        # Single-output model
-        else:
-            print("  (i) Detected 1-output model.")
-            single_output = outputs[0] if is_tuple else outputs
-            if isinstance(single_output, dict): # Handle models like DeepLabV3
-                single_output = single_output['out']
-            core_preds = torch.sigmoid(single_output) > 0.5
+        # Check for the 5-output CTO model structure
+        if is_tuple and num_outputs == 5:
+            print("  (i) Detected 5-output CTO model. Visualizing all outputs.")
+            # Unpack all outputs: o, o3, o2, o1, oe
+            o_final_raw = torch.sigmoid(outputs[0])
+            o3_raw = torch.sigmoid(outputs[1])
+            o2_raw = torch.sigmoid(outputs[2])
+            o1_raw = torch.sigmoid(outputs[3])
+            oe_raw = torch.sigmoid(outputs[4])
+        else: # Fallback for other models
+            print(f"  (i) Detected {num_outputs}-output model. Visualizing main output.")
+            main_output = outputs[0] if is_tuple else outputs
+            o_final_raw = torch.sigmoid(main_output)
+            # Set others to None so they don't get plotted
+            o3_raw, o2_raw, o1_raw, oe_raw = None, None, None, None
 
     # --- Convert to numpy ---
     images_np = images.cpu().numpy()
     masks_np = masks.cpu().numpy()
     
     # --- Determine Figure Layout ---
-    if num_outputs == 4:
-        num_cols = 10
-    elif num_outputs > 1:
-        num_cols = 8
-    else:
-        num_cols = 6
-        
+    # Layout: Input, GT, o3, o2, o1, oe, Final(o), Cleaned, Overlay
+    num_cols = 9
     fig, axes = plt.subplots(num_samples, num_cols, figsize=(num_cols * 3, num_samples * 3))
+    if num_samples == 1:
+        axes = axes.reshape(1, -1) # Ensure axes is always 2D
 
     # --- Process and Display Each Sample ---
     for i in range(num_samples):
-        # Prepare image for display
+        # --- Prepare data for the current sample ---
         img = images_np[i].transpose(1, 2, 0)
         img = (img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])).clip(0, 1)
-
-        # --- Column 0: Input Image ---
+        gt_mask = masks_np[i, 0]
+        
+        # --- Column 0: Input & Column 1: Ground Truth ---
         axes[i, 0].imshow(img)
         axes[i, 0].set_title('Input')
         axes[i, 0].axis('off')
 
-        # --- Column 1: Ground Truth Mask ---
-        gt_mask = masks_np[i, 0]
         axes[i, 1].imshow(gt_mask, cmap='gray')
         axes[i, 1].set_title('Ground Truth')
         axes[i, 1].axis('off')
 
-        # --- Visualization for 4-output model (CTO-Net) ---
-        if num_outputs == 4:
-            # Get individual predictions
-            o3_pred = o3_preds[i, 0].cpu().numpy().astype(np.uint8)
-            o2_pred = o2_preds[i, 0].cpu().numpy().astype(np.uint8)
-            o1_pred = o1_preds[i, 0].cpu().numpy().astype(np.uint8)
-            oe_pred = oe_preds[i, 0].cpu().numpy().astype(np.uint8)
-            
-            # Display all 4 raw outputs
-            axes[i, 2].imshow(o3_pred, cmap='gray'); axes[i, 2].set_title('Output 1 (o3)'); axes[i, 2].axis('off')
-            axes[i, 3].imshow(o2_pred, cmap='gray'); axes[i, 3].set_title('Output 2 (o2)'); axes[i, 3].axis('off')
-            axes[i, 4].imshow(o1_pred, cmap='gray'); axes[i, 4].set_title('Output 3 (o1)'); axes[i, 4].axis('off')
-            axes[i, 5].imshow(oe_pred, cmap='gray'); axes[i, 5].set_title('Output 4 (oe)'); axes[i, 5].axis('off')
-            
-            # Based on analysis, the deepest output (oe_pred, from outputs[3]) is the cleanest.
-            # We will use it for the final segmentation.
-            # First, we must upsample it to the original image size.
-            deepest_pred_np = oe_pred.astype(np.float32)
-            if deepest_pred_np.shape != img.shape[:2]:
-                # Use cv2.resize for numpy arrays
-                deepest_pred_np = cv2.resize(deepest_pred_np, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
+        # --- Columns 2-6: Raw Auxiliary Outputs ---
+        axes[i, 2].imshow(o3_raw[i, 0].cpu().numpy(), cmap='gray'); axes[i, 2].set_title('Raw o3'); axes[i, 2].axis('off')
+        axes[i, 3].imshow(o2_raw[i, 0].cpu().numpy(), cmap='gray'); axes[i, 3].set_title('Raw o2'); axes[i, 3].axis('off')
+        axes[i, 4].imshow(o1_raw[i, 0].cpu().numpy(), cmap='gray'); axes[i, 4].set_title('Raw o1'); axes[i, 4].axis('off')
+        axes[i, 5].imshow(oe_raw[i, 0].cpu().numpy(), cmap='gray'); axes[i, 5].set_title('Raw oe (edge)'); axes[i, 5].axis('off')
 
-            best_pred_cleaned = post_process_mask(deepest_pred_np) if use_post_process else (deepest_pred_np > 0.5).astype(np.uint8)
-            axes[i, 6].imshow(best_pred_cleaned, cmap='gray'); axes[i, 6].set_title('Cleaned Deep Out'); axes[i, 6].axis('off')
- 
-            # Use the cleaned deepest prediction as the final segmentation
-            final_seg = best_pred_cleaned
-            axes[i, 7].imshow(final_seg, cmap='gray'); axes[i, 7].set_title('Final Seg (from Deep)'); axes[i, 7].axis('off')
+        # --- Columns 7-9: Final Prediction and Overlays ---
+        final_pred_raw = o_final_raw[i, 0].cpu().numpy()
+        final_pred_binary = (final_pred_raw > 0.5).astype(np.uint8)
+        final_pred_cleaned = post_process_mask(final_pred_binary) if use_post_process else final_pred_binary
 
-            # GT Overlay
-            gt_overlay = overlay_mask(img, gt_mask, color=(0, 1, 0))
-            axes[i, 8].imshow(gt_overlay); axes[i, 8].set_title('GT Overlay'); axes[i, 8].axis('off')
-
-            # Final Prediction Overlay
-            final_overlay = overlay_mask(img, final_seg, color=(0, 0, 1), alpha=0.5) # Blue for final
-            axes[i, 9].imshow(final_overlay); axes[i, 9].set_title('Final Overlay'); axes[i, 9].axis('off')
-
-        # --- Visualization for other models ---
-        else:
-            core_preds_np = core_preds[i, 0].cpu().numpy().astype(np.uint8)
-            core_cleaned = post_process_mask(core_preds_np) if use_post_process else core_preds_np
-            
-            axes[i, 2].imshow(core_preds_np, cmap='gray'); axes[i, 2].set_title('Core (Raw)'); axes[i, 2].axis('off')
-            axes[i, 3].imshow(core_cleaned, cmap='gray'); axes[i, 3].set_title('Core (Cleaned)'); axes[i, 3].axis('off')
-
-            # Dual-output models
-            if boundary_preds is not None:
-                boundary_pred = boundary_preds[i, 0].cpu().numpy().astype(np.uint8)
-                axes[i, 4].imshow(boundary_pred, cmap='gray'); axes[i, 4].set_title('Boundary Pred'); axes[i, 4].axis('off')
-                
-                gt_overlay = overlay_mask(img, gt_mask, color=(0, 1, 0))
-                axes[i, 5].imshow(gt_overlay); axes[i, 5].set_title('GT Overlay'); axes[i, 5].axis('off')
-
-                pred_overlay = overlay_mask(img, core_cleaned, color=(1, 0, 0), alpha=0.4)
-                pred_overlay = overlay_mask(pred_overlay, boundary_pred, color=(1, 1, 0), alpha=0.6)
-                axes[i, 6].imshow(pred_overlay); axes[i, 6].set_title('Pred Overlay'); axes[i, 6].axis('off')
-
-                final_seg = np.logical_or(core_cleaned, boundary_pred).astype(np.uint8)
-                final_overlay = overlay_mask(img, final_seg, color=(0, 1, 0), alpha=0.5)
-                axes[i, 7].imshow(final_overlay); axes[i, 7].set_title('Final Seg Overlay'); axes[i, 7].axis('off')
-            
-            # Single-output models
-            else:
-                # We have 6 columns (0-5)
-                # 0: Input, 1: GT, 2: Raw, 3: Cleaned
-                
-                # Column 4: Prediction Overlay
-                pred_overlay = overlay_mask(img, core_cleaned, color=(1, 0, 0))
-                axes[i, 4].imshow(pred_overlay); axes[i, 4].set_title('Pred Overlay'); axes[i, 4].axis('off')
-
-                # Column 5: Ground Truth Overlay
-                gt_overlay = overlay_mask(img, gt_mask, color=(0, 1, 0))
-                axes[i, 5].imshow(gt_overlay); axes[i, 5].set_title('GT Overlay'); axes[i, 5].axis('off')
-                
-                # Hide other unused axes
-                for k in range(6, num_cols):
-                    axes[i, k].axis('off')
+        axes[i, 6].imshow(final_pred_raw, cmap='gray'); axes[i, 6].set_title('Final Pred (o)'); axes[i, 6].axis('off')
+        axes[i, 7].imshow(final_pred_cleaned, cmap='gray'); axes[i, 7].set_title('Cleaned Final'); axes[i, 7].axis('off')
+        
+        # Overlay the cleaned final prediction on the original image
+        pred_overlay = overlay_mask(img, final_pred_cleaned, color=(0, 1, 0)) # Green overlay
+        axes[i, 8].imshow(pred_overlay); axes[i, 8].set_title('Final Overlay'); axes[i, 8].axis('off')
 
     plt.tight_layout()
     return fig
 
-def evaluate_metrics(model, dataset, device='cuda'):
-    """
-    Evaluate model on dataset using standard metrics.
-    Args:
-        model: Trained model
-        dataset: Dataset to evaluate on
-        device: Device to run model on
-    Returns:
-        Dict of metrics
-    """
-    model.eval()
-    metrics = smp.utils.metrics.IoU(threshold=0.5)
-    
-    loader = DataLoader(dataset, batch_size=8)
-    scores = []
-    
-    with torch.no_grad():
-        for batch in loader:
-            images = batch['image'].to(device)
-            masks = batch['mask']
-            
-            outputs = model(images)
-            if isinstance(outputs, tuple):
-                outputs = outputs[0]
-            if isinstance(outputs, dict):
-                outputs = outputs['out']
-            preds = torch.sigmoid(outputs)
-            
-            score = metrics(preds, masks.to(device))
-            scores.append(score.cpu().numpy())
-    
-    mean_iou = np.mean(scores)
-    return {'IoU': mean_iou}
 
-def plot_loss_curve(metrics_csv_path, save_path=None, show_val=True, fold_number=None, epochs_per_fold=None):
+
+
+
+
+
+
+
+def plot_training_curves(metrics_csv_path, save_path=None, show_val=True, fold_number=None, epochs_per_fold=None, metrics_to_plot=None):
     """
-    Plot đơn giản: Epoch vs Loss
-    Giống như trong hình - chỉ hiển thị loss theo epoch
-    
+    Plot training curves from a metrics.csv file.
+    This function can plot a simple loss curve or a comprehensive set of metrics.
+
     Args:
-        metrics_csv_path: Path to metrics.csv file
-        save_path: Optional path to save figure
-        show_val: Nếu True thì hiển thị cả train và val loss, nếu False chỉ train loss
-        fold_number: Số fold cụ thể (1-5) để hiển thị. Nếu None thì hiển thị tất cả
-        epochs_per_fold: Số epochs mỗi fold (tự động tính nếu None)
-    
-    Returns:
-        Matplotlib figure
+        metrics_csv_path (str): Path to the metrics.csv file.
+        save_path (str, optional): Path to save the figure. Defaults to None.
+        show_val (bool, optional): Whether to show validation metrics. Defaults to True.
+        fold_number (int, optional): The specific fold (1-N) to display. If None, all are shown.
+        epochs_per_fold (int, optional): Number of epochs per fold.
+        metrics_to_plot (list, optional): A list of metrics to plot. If None, plots a default set.
+                                           Example: ['loss', 'iou', 'dice']
     """
-    # Đọc CSV
     df = pd.read_csv(metrics_csv_path)
-    
-    # Nếu chọn fold cụ thể
+
     if fold_number is not None and epochs_per_fold is not None:
-        # Tính toán range của fold
         start_idx = (fold_number - 1) * epochs_per_fold
         end_idx = fold_number * epochs_per_fold
-        
-        # Filter data của fold đó
         df_filtered = df.iloc[start_idx:end_idx].copy()
-        
-        # Reset epoch về 1-N cho fold này
         df_filtered['epoch'] = range(1, len(df_filtered) + 1)
-        
         df = df_filtered
         title_suffix = f" - Fold {fold_number}"
     else:
         title_suffix = ""
-    
-    # Tạo figure đơn giản
-    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-    
-    epochs = df['epoch'].values
-    
-    # Vẽ train loss
-    ax.plot(epochs, df['train_loss'], 'b-', label='Training Loss', 
-            linewidth=2, marker='s', markersize=8, markerfacecolor='blue', markeredgecolor='blue')
-    
-    # Vẽ val loss nếu muốn
-    if show_val and 'val_loss' in df.columns:
-        ax.plot(epochs, df['val_loss'], 'r-', label='Validation Loss',
-                linewidth=2, marker='o', markersize=8, markerfacecolor='red', markeredgecolor='red')
-    
-    ax.set_title(f'Training Loss Over Epochs{title_suffix}', fontsize=14, fontweight='bold', pad=20)
-    ax.set_xlabel('Epoch', fontsize=12)
-    ax.set_ylabel('Loss', fontsize=12)
-    ax.legend(loc='upper right', fontsize=10)
-    ax.grid(True, alpha=0.3, linestyle='--')
-    
-    # Đặt ticks rõ ràng hơn
-    ax.set_xticks(epochs)
-    
-    plt.tight_layout()
-    
-    # Save nếu có path
-    if save_path:
-        fig.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Loss curve saved to {save_path}")
-    
-    return fig
 
-def plot_training_curves_from_csv(metrics_csv_path, save_path=None):
-    """
-    Plot training curves từ metrics.csv file.
-    Không cần train lại, chỉ cần đọc CSV.
-    
-    Args:
-        metrics_csv_path: Path to metrics.csv file
-        save_path: Optional path to save figure (nếu None thì chỉ hiển thị)
-    
-    Returns:
-        Matplotlib figure
-    """
-    # Đọc CSV
-    df = pd.read_csv(metrics_csv_path)
-    
-    # Tạo figure với nhiều subplots
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    fig.suptitle('Training Curves', fontsize=16, fontweight='bold')
-    
+    if metrics_to_plot is None:
+        metrics_to_plot = ['loss', 'iou', 'dice', 'pixel_acc', 'boundary_f1']
+
+    num_metrics = len(metrics_to_plot)
+    fig, axes = plt.subplots(1, num_metrics, figsize=(5 * num_metrics, 4))
+    if num_metrics == 1:
+        axes = [axes] # Make it iterable
+
+    fig.suptitle(f'Training Curves{title_suffix}', fontsize=16, fontweight='bold')
+
     epochs = df['epoch'].values
-    
-    # 1. Loss curves
-    axes[0, 0].plot(epochs, df['train_loss'], 'b-', label='Train Loss', linewidth=2, marker='o', markersize=4)
-    axes[0, 0].plot(epochs, df['val_loss'], 'r-', label='Val Loss', linewidth=2, marker='s', markersize=4)
-    axes[0, 0].set_title('Loss Curves', fontsize=12, fontweight='bold')
-    axes[0, 0].set_xlabel('Epoch')
-    axes[0, 0].set_ylabel('Loss')
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, alpha=0.3)
-    
-    # 2. IoU curves
-    axes[0, 1].plot(epochs, df['val_iou'], 'g-', label='Val IoU', linewidth=2, marker='o', markersize=4)
-    axes[0, 1].set_title('IoU Score', fontsize=12, fontweight='bold')
-    axes[0, 1].set_xlabel('Epoch')
-    axes[0, 1].set_ylabel('IoU')
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, alpha=0.3)
-    
-    # 3. Dice curves
-    axes[1, 0].plot(epochs, df['val_dice'], 'm-', label='Val Dice', linewidth=2, marker='o', markersize=4)
-    axes[1, 0].set_title('Dice Coefficient', fontsize=12, fontweight='bold')
-    axes[1, 0].set_xlabel('Epoch')
-    axes[1, 0].set_ylabel('Dice')
-    axes[1, 0].legend()
-    axes[1, 0].grid(True, alpha=0.3)
-    
-    # 4. Combined metrics
-    axes[1, 1].plot(epochs, df['val_iou'], label='IoU', linewidth=2)
-    axes[1, 1].plot(epochs, df['val_dice'], label='Dice', linewidth=2)
-    axes[1, 1].plot(epochs, df['val_pixel_acc'], label='Pixel Acc', linewidth=2)
-    axes[1, 1].plot(epochs, df['val_boundary_f1'], label='Boundary F1', linewidth=2)
-    axes[1, 1].set_title('All Metrics', fontsize=12, fontweight='bold')
-    axes[1, 1].set_xlabel('Epoch')
-    axes[1, 1].set_ylabel('Score')
-    axes[1, 1].legend()
-    axes[1, 1].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    
-    # Save nếu có path
+
+    for i, metric in enumerate(metrics_to_plot):
+        ax = axes[i]
+        train_metric = f'train_{metric}'
+        val_metric = f'val_{metric}'
+
+        if train_metric in df.columns:
+            ax.plot(epochs, df[train_metric], 'b-', label='Train', linewidth=2, marker='o', markersize=4)
+        if show_val and val_metric in df.columns:
+            ax.plot(epochs, df[val_metric], 'r-', label='Val', linewidth=2, marker='s', markersize=4)
+
+        ax.set_title(metric.replace('_', ' ').title(), fontsize=12, fontweight='bold')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel(metric.title())
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"Training curves saved to {save_path}")
-    
+
     return fig
-
-def plot_training_curves(history):
-    """
-    Plot training curves for loss and IoU.
-    Args:
-        history: Training history containing loss and IoU
-    Returns:
-        Matplotlib figure
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    axes[0].plot(history['train_loss'], label='Train')
-    axes[0].plot(history['val_loss'], label='Val')
-    axes[0].set_title('Loss')
-    axes[0].set_xlabel('Epoch')
-    axes[0].set_ylabel('Loss')
-    axes[0].legend()
-    
-    axes[1].plot(history['train_iou'], label='Train')
-    axes[1].plot(history['val_iou'], label='Val')
-    axes[1].set_title('IoU')
-    axes[1].set_xlabel('Epoch')
-    axes[1].set_ylabel('IoU')
-    axes[1].legend()
-    
-    plt.tight_layout()
-    return fig
-
-if __name__ == '__main__':
-    import argparse
-    import os
-    parser = argparse.ArgumentParser(description="Generate evaluation tables from metrics.")
-    parser.add_argument("--metrics_file", type=str, required=True, help="Path to the metrics.csv file from a training run.")
-    parser.add_argument("--type", type=str, choices=["Human", "Rat"], default="Human", help="The type of model/data.")
-    args = parser.parse_args()
-
-    # Create the output directory inside the correct typed models folder
-    output_dir = os.path.join("models", args.type)
-    os.makedirs(output_dir, exist_ok=True)
-
-    print(f"Generating evaluation table from {args.metrics_file} for type '{args.type}'")
-    output_path = os.path.join(output_dir, 'evaluation_summary.txt')
-    visualize_evaluation_table(args.metrics_file, output_path)
-    print(f"Saved summary table to {output_path}")

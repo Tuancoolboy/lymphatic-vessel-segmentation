@@ -53,59 +53,6 @@ class TrainingLogger:
         with open(self.metrics_file, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=self.metrics_fields)
             writer.writerow(metrics)
-            
-    def log_model(self, model_path, metrics=None):
-        """
-        Log saved model path and optional metrics
-        Args:
-            model_path: Path to saved model weights
-            metrics: Optional dict of metrics for this model
-        """
-        models_file = os.path.join(self.experiment_dir, "models.jsonl")
-        entry = {
-            "path": model_path,
-            "step": datetime.now().isoformat()
-        }
-        if metrics:
-            entry["metrics"] = metrics
-            
-        with open(models_file, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-            
-    def get_best_model(self, metric="val_loss", mode="min"):
-        """
-        Get path to best model according to metric
-        Args:
-            metric: Metric name to compare
-            mode: "min" or "max"
-        Returns:
-            Path to best model, or None if no models logged
-        """
-        models_file = os.path.join(self.experiment_dir, "models.jsonl")
-        if not os.path.exists(models_file):
-            return None
-            
-        best_path = None
-        best_value = float("inf") if mode == "min" else float("-inf")
-        
-        with open(models_file) as f:
-            for line in f:
-                entry = json.loads(line)
-                if "metrics" not in entry:
-                    continue
-                    
-                value = entry["metrics"].get(metric)
-                if value is None:
-                    continue
-                    
-                if mode == "min" and value < best_value:
-                    best_value = value
-                    best_path = entry["path"]
-                elif mode == "max" and value > best_value:
-                    best_value = value
-                    best_path = entry["path"]
-                    
-        return best_path
 
     def log_message(self, message: str):
         """Append a plain text message to a log file and also print it."""

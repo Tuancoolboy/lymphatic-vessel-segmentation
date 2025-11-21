@@ -9,14 +9,17 @@ import torch.nn.functional as F
 from copy import deepcopy
 from typing import Optional, Dict
 from tqdm import tqdm
+from torch.utils.data import DataLoader
 
 from ..utils.logging import TrainingLogger
-from ..utils.metrics import dice_coefficient, iou_score, pixel_accuracy, boundary_f1_score, avg_score
-from .losses import BCELoss, CombinedLoss, DeepSupervisionLoss
-from ..config import ModelConfig, TrainingConfig
+from src.utils.metrics import (
+    dice_coefficient, iou_score, pixel_accuracy, boundary_f1_score, avg_score
+)
+from src.training.losses import BCELoss, CombinedLoss, DeepSupervisionLoss
+from src.config import ModelConfig, TrainingConfig
+from src.training.trainer import Trainer
 
-
-class MeanTeacherTrainer:
+class MeanTeacherTrainer(Trainer):
     """
     Trainer for Mean Teacher semi-supervised learning.
     """
@@ -30,88 +33,30 @@ class MeanTeacherTrainer:
         logger: TrainingLogger,
         device: str = "cuda"
     ):
-        self.student_model = student_model
+        # Initialize the base Trainer with the student model
+        super().__init__(student_model, model_config, config, logger, device)
+        
+        # Mean Teacher specific attributes
+        self.student_model = self.model  # Rename for clarity
         self.teacher_model = teacher_model
         self.optimizer = optimizer
-        self.model_config = model_config
-        self.config = config
-        self.logger = logger
-        self.device = device
-
-        # Auto-detect device
-        if self.device == "auto":
-            if torch.cuda.is_available():
-                self.device = "cuda"
-            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-                self.device = "mps"
-            else:
-                self.device = "cpu"
-        
-        # Fallback for specified but unavailable devices
-        elif self.device == "cuda" and not torch.cuda.is_available():
-            print("Warning: CUDA not available, checking MPS...")
-            if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-                print("Using MPS (Apple Silicon GPU)")
-                self.device = "mps"
-            else:
-                print("Using CPU")
-                self.device = "cpu"
-        elif self.device == "mps":
-            if not (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()):
-                print("Warning: MPS not available, using CPU")
-                self.device = "cpu"
-
-        self.student_model = self.student_model.to(self.device)
         self.teacher_model = self.teacher_model.to(self.device)
 
-        self.criterion = self._build_criterion()
         self.consistency_loss = nn.MSELoss()
 
         self.consistency_rampup = config.consistency_rampup
         self.consistency_weight = config.consistency_weight
         self.ema_decay = config.ema_decay
 
-        self._best_val_loss = float('inf')
-        self._best_model_state = None
-        self._epochs_since_improve = 0
-
-    def _build_criterion(self):
-        loss_type = getattr(self.config, 'loss_type', 'bce')
-        if loss_type == 'combined':
-            # Check for alpha schedule params in training config
-            alpha_schedule = getattr(self.config, 'alpha_schedule', 'rebalance')
-            initial_alpha = getattr(self.config, 'initial_alpha', 0.005)
-            alpha_increment = getattr(self.config, 'alpha_increment', 0.005)
-            criterion = CombinedLoss(alpha_schedule=alpha_schedule, initial_alpha=initial_alpha, alpha_increment=alpha_increment)
-        else:
-            criterion = BCELoss()
-
-        # Check if deep supervision is enabled in the model config
-        deep_supervision_enabled = (
-            self.model_config.params and
-            self.model_config.params.get('deep_supervision', False)
-        )
-
-        # Apply deep supervision loss wrapper if the model is 'cto' or if deep supervision is explicitly enabled
-        if self.model_config.name == 'cto' or deep_supervision_enabled:
-            # Get aux_weights from config, with a fallback to the default in DeepSupervisionLoss
-            aux_weights = getattr(self.config, 'aux_weights', None)
-            if aux_weights:
-                criterion = DeepSupervisionLoss(criterion, aux_weights=aux_weights)
-            else:
-                criterion = DeepSupervisionLoss(criterion)
-        
-        return criterion
-    
     def update_teacher(self, alpha=None):
         """
         Update teacher model bằng EMA của student
-        
+
         Teacher = alpha * Teacher + (1 - alpha) * Student
         """
         if alpha is None:
             alpha = self.ema_decay
-        
+
         # Update teacher weights bằng EMA
         with torch.no_grad():
             for teacher_param, student_param in zip(self.teacher_model.parameters(), self.student_model.parameters()):
@@ -128,16 +73,18 @@ class MeanTeacherTrainer:
                 return 0.0
             return self.consistency_weight * (epoch / self.consistency_rampup)
         return self.consistency_weight
-    
-    def train_epoch(self, labeled_loader, unlabeled_loader, epoch):
+
+    def train_epoch(self, train_loaders, optimizer, epoch):
         """
         Train một epoch với Mean Teacher
-        
+
         Args:
-            labeled_loader: DataLoader cho labeled data
-            unlabeled_loader: DataLoader cho unlabeled data (có thể None)
+            train_loaders: A tuple of (labeled_loader, unlabeled_loader)
+            optimizer: The optimizer for the student model.
             epoch: Current epoch number
         """
+        labeled_loader, unlabeled_loader = train_loaders
+
         self.student_model.train()
         self.teacher_model.eval()  # Teacher luôn ở eval mode
         
@@ -148,6 +95,12 @@ class MeanTeacherTrainer:
         # Consistency weight cho epoch này
         consistency_weight = self.get_consistency_weight(epoch)
         
+        # Update alpha for CombinedLoss if applicable (once per epoch)
+        if isinstance(self.criterion, CombinedLoss) or \
+           (isinstance(self.criterion, DeepSupervisionLoss) and isinstance(self.criterion.criterion, CombinedLoss)):
+            inner_loss = self.criterion.criterion if isinstance(self.criterion, DeepSupervisionLoss) else self.criterion
+            inner_loss.update_alpha(epoch)
+
         # Iterate qua labeled và unlabeled data
         labeled_iter = iter(labeled_loader) if labeled_loader else None
         unlabeled_iter = iter(unlabeled_loader) if unlabeled_loader else None
@@ -181,12 +134,6 @@ class MeanTeacherTrainer:
                     
                     # Student prediction
                     student_pred = self.student_model(images)
-                    
-                    # Update loss schedule
-                    if isinstance(self.criterion, CombinedLoss) or (isinstance(self.criterion, DeepSupervisionLoss) and isinstance(self.criterion.criterion, CombinedLoss)):
-                        # Handle both direct and wrapped CombinedLoss
-                        inner_loss = self.criterion.criterion if isinstance(self.criterion, DeepSupervisionLoss) else self.criterion
-                        inner_loss.update_alpha(epoch)
                     
                     # Supervised loss
                     supervised_loss = self.criterion(student_pred, masks.float())
@@ -240,10 +187,10 @@ class MeanTeacherTrainer:
                     continue
                 
                 # 4. Backward và update student
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 total_loss_batch.backward()
-                self.optimizer.step()
-                
+                optimizer.step()
+
                 # 5. Update teacher (EMA) - sau mỗi batch
                 self.update_teacher()
                 
@@ -286,6 +233,10 @@ class MeanTeacherTrainer:
         
         with torch.no_grad():
             for batch in val_loader:
+                # Skip if batch is empty or invalid
+                if not batch:
+                    continue
+
                 if isinstance(batch, dict):
                     images = batch['image'].to(self.device)
                     masks = batch['mask'].to(self.device)
@@ -304,11 +255,6 @@ class MeanTeacherTrainer:
                     main_prediction = predictions[0]
                 else:
                     main_prediction = predictions
-                
-                # Update loss schedule
-                if isinstance(self.criterion, CombinedLoss) or (isinstance(self.criterion, DeepSupervisionLoss) and isinstance(self.criterion.criterion, CombinedLoss)):
-                    inner_loss = self.criterion.criterion if isinstance(self.criterion, DeepSupervisionLoss) else self.criterion
-                    inner_loss.update_alpha(0)  # Epoch 0 cho validation
                 
                 # The criterion will use the inner loss for a single tensor input
                 loss = self.criterion(main_prediction, masks.float())
@@ -333,93 +279,25 @@ class MeanTeacherTrainer:
         avg_loss = total_loss / len(val_loader) if len(val_loader) > 0 else 0.0
         
         return {
-            'loss': avg_loss,
-            'dice': dice,
-            'iou': iou,
-            'pixel_acc': pixel_acc,
-            'boundary_f1': boundary_f1,
-            'avg_score': avg_sc
+            'val_loss': avg_loss,
+            'val_dice': dice,
+            'val_iou': iou,
+            'val_pixel_acc': pixel_acc,
+            'val_boundary_f1': boundary_f1,
+            'val_avg': avg_sc
         }
     
-    def train(self, labeled_loader, unlabeled_loader, val_loader, scheduler=None):
+    def train(self, labeled_loader: DataLoader, unlabeled_loader: Optional[DataLoader], val_loader: DataLoader, scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None) -> nn.Module:
         """
-        Full training loop với Mean Teacher
+        Override the main training loop to handle Mean Teacher's specific epoch training.
+        This method now prepares the arguments and calls the base `Trainer.train` method,
+        which handles the main epoch loop, validation, logging, and early stopping.
         """
-        for epoch in range(self.config.epochs):
-            # Train
-            train_metrics = self.train_epoch(labeled_loader, unlabeled_loader, epoch)
-            
-            # Validate
-            val_metrics = self.validate(val_loader)
-            
-            # Learning rate scheduling
-            if scheduler is not None:
-                if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                    scheduler.step(val_metrics['loss'])
-                else:
-                    scheduler.step()
-            
-            # Logging
-            if self.logger:
-                # Log metrics (tương tự Trainer)
-                metrics_dict = {
-                    'epoch': epoch,
-                    'train_loss': train_metrics['loss'],
-                    'val_loss': val_metrics['loss'],
-                    'val_dice': val_metrics['dice'],
-                    'val_iou': val_metrics['iou'],
-                    'val_pixel_acc': val_metrics['pixel_acc'],
-                    'val_boundary_f1': val_metrics['boundary_f1'],
-                    'val_avg_score': val_metrics['avg_score'],
-                    'supervised_loss': train_metrics['supervised_loss'],
-                    'consistency_loss': train_metrics['consistency_loss'],
-                    'consistency_weight': train_metrics['consistency_weight']
-                }
-                self.logger.log_metrics(metrics_dict)
-            
-            # Early stopping
-            if val_metrics['loss'] < self._best_val_loss:
-                self._best_val_loss = val_metrics['loss']
-                self._best_model_state = deepcopy(self.teacher_model.state_dict())
-                self._epochs_since_improve = 0
-            else:
-                self._epochs_since_improve += 1
-                if self._epochs_since_improve >= self.config.early_stop_patience:
-                    print(f"Early stopping at epoch {epoch+1}")
-                    break
-            
-            print(f"Epoch {epoch+1}/{self.config.epochs}: "
-                  f"Train Loss: {train_metrics['loss']:.4f}, "
-                  f"Val Loss: {val_metrics['loss']:.4f}, "
-                  f"Val Dice: {val_metrics['dice']:.4f}, "
-                  f"Consistency: {train_metrics['consistency_loss']:.4f} (λ={train_metrics['consistency_weight']:.3f})")
+        # The base `train` method expects `train_loader` as the first argument.
+        # We pass a tuple of loaders, and our overridden `train_epoch` will know how to handle it.
+        train_loaders = (labeled_loader, unlabeled_loader)
         
-        # Load best model
-        if self._best_model_state is not None:
-            self.teacher_model.load_state_dict(self._best_model_state)
+        # Call the parent's train method
+        super().train(train_loaders, val_loader, self.optimizer, scheduler)
         
         return self.teacher_model  # Trả về teacher model (tốt hơn student)
-
-
-def create_mean_teacher_models(base_model):
-    """
-    Tạo student và teacher models từ base model
-    
-    Args:
-        base_model: Model architecture (UNet++ với ResNet34)
-    
-    Returns:
-        student_model: Model để train
-        teacher_model: Copy của student (sẽ được update bằng EMA)
-    """
-    # Student: Model được train
-    student_model = base_model
-    
-    # Teacher: Copy của student (không train)
-    teacher_model = deepcopy(base_model)
-    
-    # Freeze teacher (không update bằng gradient)
-    for param in teacher_model.parameters():
-        param.requires_grad = False
-    
-    return student_model, teacher_model

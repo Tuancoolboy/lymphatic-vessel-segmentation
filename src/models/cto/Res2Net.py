@@ -2,16 +2,14 @@ import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
 import torch
-import torch.nn.functional as F
 
-__all__ = ['Res2Net', 'res2net50_v1b', 'res2net101_v1b', 'res2net50_v1b_26w_4s']
+__all__ = ['Res2Net', 'res2net50_v1b_26w_4s', 'res2net101_v1b_26w_4s']
 
 resnet_model_urls = {
     'res2net50_v1b_26w_4s': 'https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth',
     'res2net101_v1b_26w_4s': 'https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net101_v1b_26w_4s-0812c246.pth',
 }
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class Bottle2neck(nn.Module):
     expansion = 4
 
@@ -93,7 +91,7 @@ class Bottle2neck(nn.Module):
 
 class Res2Net(nn.Module):
 
-    def __init__(self, block, layers, baseWidth=26, scale=4, num_classes=1000):
+    def __init__(self, block, layers, baseWidth=26, scale=4):
         self.inplanes = 64
         super(Res2Net, self).__init__()
         self.baseWidth = baseWidth
@@ -114,8 +112,6 @@ class Res2Net(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -155,10 +151,6 @@ class Res2Net(nn.Module):
         x3 = self.layer3(x2)
         x4 = self.layer4(x3)
 
-        # x = self.avgpool(x)
-        # x = x.view(x.size(0), -1)
-        # x = self.fc(x)
-
         return x1, x2, x3, x4
 
 
@@ -169,11 +161,8 @@ def res2net50_v1b_26w_4s(pretrained=False, **kwargs):
     """
     model = Res2Net(Bottle2neck, [3, 4, 6, 3], baseWidth=26, scale=4, **kwargs)
     if pretrained:
-        # Map to CPU if CUDA not available
-        import torch
-        map_location = 'cpu' if not torch.cuda.is_available() else None
-        state_dict = model_zoo.load_url(resnet_model_urls['res2net50_v1b_26w_4s'], map_location=map_location)
-        model.load_state_dict(state_dict)
+        state_dict = model_zoo.load_url(resnet_model_urls['res2net50_v1b_26w_4s'], map_location='cpu')
+        model.load_state_dict(state_dict, strict=False)
     return model
 
 
@@ -184,31 +173,6 @@ def res2net101_v1b_26w_4s(pretrained=False, **kwargs):
     """
     model = Res2Net(Bottle2neck, [3, 4, 23, 3], baseWidth=26, scale=4, **kwargs)
     if pretrained:
-        # Map to CPU if CUDA not available
-        import torch
-        map_location = 'cpu' if not torch.cuda.is_available() else None
-        state_dict = model_zoo.load_url(resnet_model_urls['res2net101_v1b_26w_4s'], map_location=map_location)
-        model.load_state_dict(state_dict)
+        state_dict = model_zoo.load_url(resnet_model_urls['res2net101_v1b_26w_4s'], map_location='cpu')
+        model.load_state_dict(state_dict, strict=False)
     return model
-
-
-def res2net152_v1b_26w_4s(pretrained=False, **kwargs):
-    """Constructs a Res2Net-50_v1b_26w_4s lib.
-    Args:
-        pretrained (bool): If True, returns a lib pre-trained on ImageNet
-    """
-    model = Res2Net(Bottle2neck, [3, 8, 36, 3], baseWidth=26, scale=4, **kwargs)
-    if pretrained:
-        # Map to CPU if CUDA not available
-        import torch
-        map_location = 'cpu' if not torch.cuda.is_available() else None
-        state_dict = model_zoo.load_url(resnet_model_urls['res2net152_v1b_26w_4s'], map_location=map_location)
-        model.load_state_dict(state_dict)
-    return model
-
-
-if __name__ == '__main__':
-    images = torch.rand(1, 3, 224, 224).cuda(0)
-    model = res2net50_v1b_26w_4s(pretrained=True)
-    model = model.cuda(0)
-    print(model(images).size())

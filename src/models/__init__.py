@@ -1,4 +1,4 @@
 """
-Model definitions
+BCP Semi-supervised Vessel Segmentation package
 """
-from .model_factory import get_baseline_model, get_model, load_checkpoint, save_checkpoint
+from .model_factory import get_model, load_checkpoint, save_checkpoint

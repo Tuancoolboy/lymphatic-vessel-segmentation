@@ -33,21 +33,22 @@ class DeepSupervisionLoss(nn.Module):
         if not isinstance(predictions, (list, tuple)):
             return self.criterion(predictions, targets)
             
-        # If it's a tuple (training case), compute weighted deep supervision loss
-        if len(self.aux_weights) != len(predictions):
-                print(f"Warning: Number of weights ({len(self.aux_weights)}) does not match number of predictions ({len(predictions)}). Loss may be incorrect.")
-
-        loss = 0
-        for i, p in enumerate(predictions):
-            # Resize target to match prediction size
-            target_resized = F.interpolate(targets, size=p.shape[2:], mode='bilinear', align_corners=False)
+        # The first prediction is the main one, the rest are auxiliary
+        main_prediction = predictions[0]
+        aux_predictions = predictions[1:]
+        
+        # Loss for the main output (weight is implicitly 1.0)
+        loss = self.criterion(main_prediction, targets)
+        
+        # Add weighted losses for auxiliary outputs
+        if len(aux_predictions) > 0:
+            if len(self.aux_weights) != len(aux_predictions):
+                print(f"Warning: Number of aux_weights ({len(self.aux_weights)}) does not match number of auxiliary predictions ({len(aux_predictions)}).")
             
-            # Get weight for the current prediction
-            weight = self.aux_weights[i] if i < len(self.aux_weights) else 1.0
-
-            if weight > 0:
-                loss += weight * self.criterion(p, target_resized)
-            
+            for i, p in enumerate(aux_predictions):
+                if i < len(self.aux_weights) and self.aux_weights[i] > 0:
+                    target_resized = F.interpolate(targets, size=p.shape[2:], mode='bilinear', align_corners=False)
+                    loss += self.aux_weights[i] * self.criterion(p, target_resized)
         return loss
 
 
@@ -141,14 +142,3 @@ class CombinedLoss(nn.Module):
         else:
             combined = dice + self.alpha * boundary + bce
         return combined
-
-    def get_loss_components(self, predictions: torch.Tensor, targets: torch.Tensor) -> dict:
-        return {
-            'dice': float(self.dice_loss(predictions, targets).item()),
-            'boundary': float(self.boundary_loss(predictions, targets).item()),
-            'bce': float(self.bce_loss(predictions, targets).item()),
-            'combined': float(self.forward(predictions, targets).item()),
-            'alpha': float(self.alpha)
-        }
-
-

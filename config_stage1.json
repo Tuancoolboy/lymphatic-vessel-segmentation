@@ -27,7 +27,7 @@
     "weight_decay": 1e-5,
     "device": "auto",
     "loss_type": "combined",
-    "aux_weights": [1.0, 0.4, 0.4, 0.2, 0.2],
+    "aux_weights": [0.4, 0.4, 0.2, 0.2],
     "alpha_schedule": "rebalance",
     "initial_alpha": 0.1,
     "alpha_increment": 0.01

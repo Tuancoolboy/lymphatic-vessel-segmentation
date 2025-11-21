@@ -115,19 +115,19 @@ def boundary_f1_score(pred, target, tolerance: int = 2) -> float:
     for p, t in zip(pred_arr, targ_arr):
         pb = _binary_boundary(p)
         tb = _binary_boundary(t)
+
+        # Handle cases where one or both boundaries are empty
         if pb.sum() == 0 and tb.sum() == 0:
             f1_scores.append(1.0)
             continue
-        if pb.sum() == 0 or tb.sum() == 0:
-            f1_scores.append(0.0)
-            continue
+
         pb_dil = cv2.dilate(pb, kernel)
         tb_dil = cv2.dilate(tb, kernel)
         # Matches
         p_match = (pb & tb_dil).sum()
         t_match = (tb & pb_dil).sum()
-        precision = p_match / (pb.sum() + 1e-6)
-        recall = t_match / (tb.sum() + 1e-6)
+        precision = p_match / pb.sum() if pb.sum() > 0 else 1.0
+        recall = t_match / tb.sum() if tb.sum() > 0 else 1.0
         if precision + recall == 0:
             f1 = 0.0
         else:
@@ -150,31 +150,3 @@ def avg_score(iou: float, dice: float, pixel_acc: float, boundary_f1: float,
         + boundary_f1 * weights.get("boundary_f1", 0.0)
     )
     return float(total / wsum)
-
-def precision_recall(pred, target):
-    """
-    Calculate precision and recall
-    Args:
-        pred: prediction mask (B,1,H,W) or (H,W)
-        target: ground truth mask (B,1,H,W) or (H,W)
-    Returns:
-        precision, recall
-    """
-    if isinstance(pred, torch.Tensor):
-        pred = pred.detach().cpu().numpy()
-    if isinstance(target, torch.Tensor):
-        target = target.detach().cpu().numpy()
-        
-    if pred.ndim == 4:
-        axes = (2,3)
-    else:
-        axes = (0,1)
-        
-    tp = np.sum(pred * target, axis=axes)
-    fp = np.sum(pred * (1-target), axis=axes)
-    fn = np.sum((1-pred) * target, axis=axes)
-    
-    precision = np.mean(tp / (tp + fp + 1e-6))
-    recall = np.mean(tp / (tp + fn + 1e-6))
-    
-    return precision, recall

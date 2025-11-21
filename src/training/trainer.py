@@ -8,16 +8,16 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from tqdm import tqdm
 
-from ..config import TrainingConfig, ModelConfig
-from ..utils.logging import TrainingLogger
-from ..utils.metrics import (
+from src.config import TrainingConfig, ModelConfig
+from src.utils.logging import TrainingLogger
+from src.utils.metrics import (
     avg_score,
     boundary_f1_score,
     dice_coefficient,
     iou_score,
     pixel_accuracy,
 )
-from .losses import BCELoss, CombinedLoss, DeepSupervisionLoss
+from src.training.losses import BCELoss, CombinedLoss, DeepSupervisionLoss
 
 
 class Trainer:
@@ -103,6 +103,13 @@ class Trainer:
     ) -> float:
         """Train one epoch"""
         self.model.train()
+
+        # Update alpha for CombinedLoss if applicable
+        if isinstance(self.criterion, CombinedLoss) or \
+           (isinstance(self.criterion, DeepSupervisionLoss) and isinstance(self.criterion.criterion, CombinedLoss)):
+            inner_loss = self.criterion.criterion if isinstance(self.criterion, DeepSupervisionLoss) else self.criterion
+            inner_loss.update_alpha(epoch)
+
         total_loss = 0
         
         with tqdm(train_loader, desc=f"Epoch {epoch+1}") as pbar:
@@ -124,60 +131,38 @@ class Trainer:
                 
         return total_loss / len(train_loader)
     
-    def validate(self, val_loader: DataLoader) -> Dict[str, float]:
+    def validate(self, val_loader: DataLoader, model_to_validate: Optional[nn.Module] = None) -> Dict[str, float]:
         """Run validation and compute metrics"""
-        self.model.eval()
-        val_loss = 0
-        val_dice = 0
-        val_iou = 0
-        val_acc = 0
-        val_bf1 = 0
+        model = model_to_validate if model_to_validate is not None else self.model
+        model.eval()
+
+        total_loss = 0.0
+        all_preds = []
+        all_targets = []
         
         with torch.no_grad():
             for batch in val_loader:
                 images = batch['image'].to(self.device)
                 masks = batch['mask'].to(self.device)
                 
-                outputs = self.model(images)
-                
-                # For deep supervision models, select the desired output for validation
+                outputs = model(images)
+
+                # For deep supervision, use the main output (index 0) for validation
                 if isinstance(outputs, (list, tuple)):
-                    # The last output is from the deepest layer, which is often the cleanest.
-                    # We will use this for calculating metrics.
-                    output_for_metrics = outputs[0]
-                    
-                    # The loss in validation should reflect the metric calculation.
-                    # We compute loss on this chosen output. The DeepSupervisionLoss class
-                    # will correctly fall back to the base criterion for a single tensor.
-                    # We must resize the mask to match the output's resolution.
-                    if output_for_metrics.shape[2:] != masks.shape[2:]:
-                        resized_masks = F.interpolate(masks.float(), size=output_for_metrics.shape[2:], mode='bilinear', align_corners=False)
-                    else:
-                        resized_masks = masks.float()
-                    loss = self.criterion(output_for_metrics, resized_masks)
-
-                    # For metric calculation (Dice, IoU), upsample the output to original mask size
-                    if output_for_metrics.shape[2:] != masks.shape[2:]:
-                        final_output = F.interpolate(output_for_metrics, size=masks.shape[2:], mode='bilinear', align_corners=False)
-                    else:
-                        final_output = output_for_metrics
+                    final_output = outputs[0]
                 else:
-                    # Standard single-output model
                     final_output = outputs
-                    loss = self.criterion(final_output, masks.float())
 
-                # Compute metrics
-                pred = (torch.sigmoid(final_output) > 0.5).float()
-                dice = dice_coefficient(pred, masks)
-                iou = iou_score(pred, masks)
-                acc = pixel_accuracy(pred, masks)
-                bf1 = boundary_f1_score(pred, masks)
+                # The criterion will handle single tensor input correctly
+                loss = self.criterion(final_output, masks.float())
+
+                total_loss += loss.item()
                 
-                val_loss += loss.item()
-                val_dice += dice
-                val_iou += iou
-                val_acc += acc
-                val_bf1 += bf1
+                # Collect predictions and targets for metrics
+                probs = torch.sigmoid(final_output)
+                preds = (probs > 0.5).float()
+                all_preds.append(preds)
+                all_targets.append(masks)
                 
         num_batches = len(val_loader)
         if num_batches == 0:
@@ -190,19 +175,24 @@ class Trainer:
                 'val_boundary_f1': 0,
                 'val_avg': 0
             }
-
-        mean_loss = val_loss / num_batches
-        mean_dice = val_dice / num_batches
-        mean_iou = val_iou / num_batches
-        mean_acc = val_acc / num_batches
-        mean_bf1 = val_bf1 / num_batches
+        
+        # Compute metrics over all batches
+        all_preds = torch.cat(all_preds, dim=0)
+        all_targets = torch.cat(all_targets, dim=0)
+        
+        dice = dice_coefficient(all_preds, all_targets)
+        iou = iou_score(all_preds, all_targets)
+        pixel_acc = pixel_accuracy(all_preds, all_targets)
+        boundary_f1 = boundary_f1_score(all_preds, all_targets)
+        avg_sc = avg_score(iou, dice, pixel_acc, boundary_f1)
+        
         metrics = {
-            'val_loss': mean_loss,
-            'val_dice': mean_dice,
-            'val_iou': mean_iou,
-            'val_pixel_acc': mean_acc,
-            'val_boundary_f1': mean_bf1,
-            'val_avg': avg_score(mean_iou, mean_dice, mean_acc, mean_bf1)
+            'val_loss': total_loss / num_batches,
+            'val_dice': dice,
+            'val_iou': iou,
+            'val_pixel_acc': pixel_acc,
+            'val_boundary_f1': boundary_f1,
+            'val_avg': avg_sc
         }
         return metrics
     
@@ -227,32 +217,38 @@ class Trainer:
             
         for epoch in range(self.config.epochs):
             # Training
-            train_loss = self.train_epoch(train_loader, optimizer, epoch)
+            train_metrics = self.train_epoch(train_loader, optimizer, epoch)
             
             # Validation
-            metrics = self.validate(val_loader)
-            val_loss = metrics['val_loss']
+            val_metrics = self.validate(val_loader)
+            val_loss = val_metrics['val_loss']
             
             # Scheduler step
             if scheduler is not None:
                 scheduler.step(val_loss)
 
+            # Prepare metrics for logging
+            log_metrics = {'epoch': epoch + 1}
+            if isinstance(train_metrics, dict):
+                log_metrics.update(train_metrics)
+                train_loss_display = train_metrics.get('loss', 0.0)
+            else: # is a float
+                log_metrics['train_loss'] = train_metrics
+                train_loss_display = train_metrics
+            log_metrics.update(val_metrics)
+
             # Logging
             if self.logger is not None:
-                self.logger.log_metrics({
-                    'epoch': epoch + 1,
-                    'train_loss': train_loss,
-                    **metrics
-                })
+                self.logger.log_metrics(log_metrics)
                 
             print(f"Epoch {epoch+1}/{self.config.epochs}")
-            print(f"Train Loss: {train_loss:.4f}")
+            print(f"Train Loss: {train_loss_display:.4f}")
             print(f"Valid Loss: {val_loss:.4f}")
-            print(f"Dice Coef: {metrics['val_dice']:.4f}")
-            print(f"IoU Score: {metrics['val_iou']:.4f}")
-            print(f"Pixel Acc: {metrics['val_pixel_acc']:.4f}")
-            print(f"BF1 Score: {metrics['val_boundary_f1']:.4f}")
-            print(f"Avg Score: {metrics['val_avg']:.4f}")
+            print(f"Dice Coef: {val_metrics['val_dice']:.4f}")
+            print(f"IoU Score: {val_metrics['val_iou']:.4f}")
+            print(f"Pixel Acc: {val_metrics['val_pixel_acc']:.4f}")
+            print(f"BF1 Score: {val_metrics['val_boundary_f1']:.4f}")
+            print(f"Avg Score: {val_metrics['val_avg']:.4f}")
             
             # Save best model
             if val_loss < self._best_val_loss - 1e-6:
@@ -286,18 +282,8 @@ def train_kfold(
     logger: Optional[TrainingLogger] = None
 ) -> nn.Module:
     """K-fold cross validation wrapper"""
-    if len(dataset) < config.k_folds:
-        print(f"Dataset too small for {config.k_folds}-fold CV")
-        print("Training on full dataset instead")
-        model = model_factory()
-        trainer = Trainer(model, model_config, config, logger)
-        return trainer.train(
-            DataLoader(dataset, batch_size=config.batch_size, shuffle=True),
-            DataLoader(dataset, batch_size=config.batch_size)
-        )
-
-    if config.k_folds <= 1:
-        print("k_folds <= 1, training on full dataset without cross-validation.")
+    if config.k_folds <= 1 or len(dataset) < config.k_folds:
+        print(f"K-fold not applicable (k={config.k_folds}, dataset_size={len(dataset)}). Using a simple train/validation split.")
         
         # Create a simple train/val split
         val_split = 0.1
@@ -323,7 +309,12 @@ def train_kfold(
         
         model = model_factory()
         trainer = Trainer(model, model_config, config, logger)
-        return trainer.train(train_loader, val_loader)
+        # call trainer.train directly without recreating optimizer/scheduler
+        # because they are default-created in trainer.train if not provided.
+        return trainer.train(
+            train_loader=train_loader,
+            val_loader=val_loader
+        )
     # Split indices into folds
     indices = np.arange(len(dataset))
     fold_sizes = np.full(

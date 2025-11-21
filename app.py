@@ -1,8 +1,6 @@
 import sys
 import os
-import cv2
 import numpy as np
-import segmentation_models_pytorch as smp
 import torch
 import torch.nn as nn
 import albumentations as A
@@ -16,6 +14,9 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage, QFont
 import matplotlib.pyplot as plt
+import cv2
+# Use absolute imports for clarity and stability
+from src.models.cto.CTO_net import CTO
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -26,7 +27,7 @@ class VideoSegmentationApp(QMainWindow):
     def __init__(self, running_mode = "online"):
         super().__init__()
         self.setWindowTitle("Video Segmentation and Diameter Measurement - Enhanced")
-        # Maximize window để tận dụng toàn bộ màn hình
+        # Maximize window to utilize the entire screen
         self.showMaximized()
         self.running_mode = running_mode
         # Video properties
@@ -48,6 +49,7 @@ class VideoSegmentationApp(QMainWindow):
         self.total_frames = 0
         self.current_frame_number = 0
         self.fps = 30
+        self.frame_skip = 4  # Default to processing every 4th frame
         self.calibration_factor = 1.0
         self.video_width = 0
         self.video_height = 0
@@ -110,19 +112,14 @@ class VideoSegmentationApp(QMainWindow):
     def load_model(self, path: str, device: torch.device) -> nn.Module:
         """Loads a segmentation model from a local .pth file."""
         try:
-            model_name = os.path.basename(path)
-            model_arch = model_name.split("_")[0]
+            # Instantiate the custom CTO model
+            model = CTO(seg_classes=1)
             
-            model = getattr(smp, model_arch)(
-                encoder_name="resnet34",
-                encoder_weights=None,  # Weights are loaded from the state dict
-                in_channels=3,
-                classes=1
-            )
-
-            model.load_state_dict(torch.load(path, map_location=device)['state_dict'])
-            model.name = os.path.splitext(model_name)[0]
-
+            # Load the state dictionary
+            state_dict = torch.load(path, map_location=device)
+            model.load_state_dict(state_dict)
+            
+            model.name = os.path.splitext(os.path.basename(path))[0]
         except Exception as e:
             logging.error(f"Failed to load model from {path}: {e}")
             raise
@@ -158,11 +155,11 @@ class VideoSegmentationApp(QMainWindow):
         # Main layout
         main_layout = QHBoxLayout(central_widget)
         
-        # Left panel for controls - GIỮ NGUYÊN KÍCH THƯỚC ĐỂ CHẮC CHẮN
+        # Left panel for controls - KEEP ORIGINAL SIZE TO BE SAFE
         left_panel = QVBoxLayout()
         left_widget = QWidget()
         left_widget.setLayout(left_panel)
-        left_widget.setFixedWidth(300)  # Giảm từ 350 xuống 300 để video có nhiều chỗ hơn
+        left_widget.setFixedWidth(300)  # Reduce from 350 to 300 to give more space for the video
         
         # Video controls group
         video_group = QGroupBox("Video Controls")
@@ -177,7 +174,7 @@ class VideoSegmentationApp(QMainWindow):
         self.play_btn.setEnabled(False)
         video_layout.addWidget(self.play_btn)
         
-        # Time slider sẽ được đặt dưới video, xóa khỏi đây
+        # Time slider will be placed under the video, remove from here
         
         # Progress bar
         self.progress_bar = QProgressBar()
@@ -233,6 +230,15 @@ class VideoSegmentationApp(QMainWindow):
         self.manual_diameter_cb.stateChanged.connect(self.update_display_if_paused)
         measure_layout.addWidget(self.manual_diameter_cb)
         
+        # Frame skip control
+        measure_layout.addWidget(QLabel("Frame Skip:"))
+        self.frame_skip_spinbox = QSpinBox()
+        self.frame_skip_spinbox.setMinimum(1)
+        self.frame_skip_spinbox.setMaximum(30)
+        self.frame_skip_spinbox.setValue(self.frame_skip)
+        self.frame_skip_spinbox.valueChanged.connect(self.set_frame_skip)
+        measure_layout.addWidget(self.frame_skip_spinbox)
+        
         left_panel.addWidget(measure_group)
 
 
@@ -285,27 +291,27 @@ class VideoSegmentationApp(QMainWindow):
         right_widget = QWidget()
         right_widget.setLayout(right_panel)
         
-        # ==================== VIDEO SECTION - TO HẾT CỠ ====================
-        # Container để căn giữa video - KHÔNG CẦN ALIGNMENT, để nó chiếm hết không gian
+        # ==================== VIDEO SECTION - MAXIMIZE ====================
+        # Container to center the video - NO ALIGNMENT NEEDED, let it take up all the space
         video_container = QWidget()
         video_container_layout = QVBoxLayout(video_container)
         
-        # Video display - TO HẾT CỠ, tự động scale theo màn hình
+        # Video display - MAXIMIZE, auto-scale with the screen
         self.video_label = QLabel()
-        # Không set fixed size nữa, để nó expand tự do
-        self.video_label.setMinimumSize(800, 600)  # Minimum size lớn hơn nhiều
+        # Don't set fixed size anymore, let it expand freely
+        self.video_label.setMinimumSize(800, 600)  # Much larger minimum size
         self.video_label.setStyleSheet("border: 2px solid gray; background-color: black;")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setText("No video loaded")
-        self.video_label.setScaledContents(False)
-        # Để video label expand hết cỡ
-        video_container_layout.addWidget(self.video_label, 1)  # stretch = 1, chiếm hết không gian
+        self.video_label.setScaledContents(True)  # Enable auto-scaling
+        # Let the video label expand to its maximum size
+        video_container_layout.addWidget(self.video_label, 1)  # stretch = 1, takes up all the space
         
-        # Video controls dưới video - cũng scale theo độ rộng video
+        # Video controls under the video - also scale with the video width
         video_controls_layout = QHBoxLayout()
         video_controls_widget = QWidget()
         video_controls_widget.setLayout(video_controls_layout)
-        # Không fix width, để nó theo độ rộng của video
+        # No fixed width, let it follow the video width
         
         # Time slider
         self.time_slider = QSlider(Qt.Horizontal)
@@ -313,7 +319,7 @@ class VideoSegmentationApp(QMainWindow):
         self.time_slider.setMaximum(100)
         self.time_slider.valueChanged.connect(self.seek_video)
         self.time_slider.setToolTip("Drag to seek video position")
-        video_controls_layout.addWidget(self.time_slider, 4)  # Tăng stretch factor
+        video_controls_layout.addWidget(self.time_slider, 4)  # Increase stretch factor
         
         # Time display label
         self.time_control_label = QLabel("00:00 / 00:00")
@@ -321,32 +327,32 @@ class VideoSegmentationApp(QMainWindow):
         self.time_control_label.setAlignment(Qt.AlignCenter)
         video_controls_layout.addWidget(self.time_control_label, 1)
         
-        video_container_layout.addWidget(video_controls_widget, 0)  # Không stretch, giữ nguyên height
-        right_panel.addWidget(video_container, 2)  # Stretch = 2, video chiếm 2/3 không gian dọc
+        video_container_layout.addWidget(video_controls_widget, 0)  # No stretch, keep original height
+        right_panel.addWidget(video_container, 2)  # Stretch = 2, video takes up 2/3 of the vertical space
         # ================================================================
         
-        # ==================== BOTTOM SECTION - GRAPHS TO HẾT CỠ ====================
-        # Layout ngang cho phần dưới: graphs bên trái TO, controls bên phải NHỎ
+        # ==================== BOTTOM SECTION - MAXIMIZE GRAPHS ====================
+        # Horizontal layout for the bottom section: large graphs on the left, small controls on the right
         bottom_layout = QHBoxLayout()
         bottom_widget = QWidget()
         bottom_widget.setLayout(bottom_layout)
         
-        # Tab widget cho graphs - TO HẾT CỠ
+        # Tab widget for graphs - MAXIMIZE
         self.graph_tabs = QTabWidget()
-        # Không set fixed size, để nó expand theo không gian còn lại
-        self.graph_tabs.setMinimumSize(600, 250)  # Minimum size lớn hơn
+        # Don't set fixed size, let it expand with the remaining space
+        self.graph_tabs.setMinimumSize(600, 250)  # Larger minimum size
         
-        # Setup graphs trong tabs
+        # Setup graphs in tabs
         self.setup_graph_tabs()
-        bottom_layout.addWidget(self.graph_tabs, 3)  # Stretch = 3, chiếm 3/4 không gian ngang
+        bottom_layout.addWidget(self.graph_tabs, 3)  # Stretch = 3, takes up 3/4 of the horizontal space
         
-        # Phần bên phải controls - GIỮ NHỎ GỌNVÌ CHỨC NĂNG PHỤ
+        # Right side controls - KEEP COMPACT FOR SECONDARY FUNCTIONS
         extra_controls_layout = QVBoxLayout()
         extra_controls_widget = QWidget()
         extra_controls_widget.setLayout(extra_controls_layout)
-        extra_controls_widget.setFixedWidth(180)  # Giảm từ 200 xuống 180
+        extra_controls_widget.setFixedWidth(180)  # Reduce from 200 to 180
         
-        # Thêm một số controls bổ sung vào góc dưới phải
+        # Add some additional controls to the bottom right corner
         extra_label = QLabel("Additional Controls")
         extra_label.setStyleSheet("font-weight: bold; color: #666; font-size: 12px;")
         extra_controls_layout.addWidget(extra_label)
@@ -361,15 +367,18 @@ class VideoSegmentationApp(QMainWindow):
         self.reset_btn.clicked.connect(self.reset_measurements)
         extra_controls_layout.addWidget(self.reset_btn)
         
-        extra_controls_layout.addStretch()  # Đẩy controls lên trên
-        bottom_layout.addWidget(extra_controls_widget, 1)  # Stretch = 1, chỉ chiếm 1/4 không gian
+        extra_controls_layout.addStretch()  # Push controls to the top
+        bottom_layout.addWidget(extra_controls_widget, 1)  # Stretch = 1, only takes up 1/4 of the space
         
-        right_panel.addWidget(bottom_widget, 1)  # Stretch = 1, phần graphs chiếm 1/3 không gian dọc
+        right_panel.addWidget(bottom_widget, 1)  # Stretch = 1, the graphs section takes up 1/3 of the vertical space
         # ================================================================
         
         # Add panels to main layout
         main_layout.addWidget(left_widget)
         main_layout.addWidget(right_widget, 1)
+
+    def set_frame_skip(self, value):
+        self.frame_skip = value
 
     def set_model(self, model_type):
         if self.current_model_type != model_type:
@@ -386,22 +395,22 @@ class VideoSegmentationApp(QMainWindow):
 
 
     def setup_graph_tabs(self):
-        """Setup graphs trong tab widget - TO HẾT CỠ"""
+        """Setup graphs in the tab widget - MAXIMIZE"""
         
         # Tab 1: Diameter graph
         diameter_tab = QWidget()
         diameter_layout = QVBoxLayout(diameter_tab)
         
-        # Tăng kích thước figure để graphs to hơn
-        self.diameter_fig = Figure(figsize=(10, 4))  # Tăng từ (6,3) lên (10,4)
+        # Increase figure size for larger graphs
+        self.diameter_fig = Figure(figsize=(10, 4))  # Increase from (6,3) to (10,4)
         self.diameter_canvas = FigureCanvas(self.diameter_fig)
         self.diameter_ax = self.diameter_fig.add_subplot(111)
-        self.diameter_line, = self.diameter_ax.plot([], [], 'b-', linewidth=3)  # Linewidth to hơn
+        self.diameter_line, = self.diameter_ax.plot([], [], 'b-', linewidth=3)  # Thicker linewidth
         self.diameter_ax.set_xlabel("Time (seconds)", fontsize=12)
         self.diameter_ax.set_ylabel("Diameter (mm)", fontsize=12)
         self.diameter_ax.set_title("Diameter Over Time", fontsize=14, fontweight='bold')
         self.diameter_ax.grid(True, alpha=0.3)
-        self.diameter_ax.tick_params(labelsize=10)  # Tick labels to hơn
+        self.diameter_ax.tick_params(labelsize=10)  # Larger tick labels
         
         diameter_layout.addWidget(self.diameter_canvas)
         self.graph_tabs.addTab(diameter_tab, "📏 Diameter")
@@ -410,15 +419,15 @@ class VideoSegmentationApp(QMainWindow):
         volume_tab = QWidget()
         volume_layout = QVBoxLayout(volume_tab)
         
-        self.volume_fig = Figure(figsize=(10, 4))  # Tăng từ (6,3) lên (10,4)
+        self.volume_fig = Figure(figsize=(10, 4))  # Increase from (6,3) to (10,4)
         self.volume_canvas = FigureCanvas(self.volume_fig)
         self.volume_ax = self.volume_fig.add_subplot(111)
-        self.volume_line, = self.volume_ax.plot([], [], 'g-', linewidth=3)  # Linewidth to hơn
+        self.volume_line, = self.volume_ax.plot([], [], 'g-', linewidth=3)  # Thicker linewidth
         self.volume_ax.set_xlabel("Time (seconds)", fontsize=12)
         self.volume_ax.set_ylabel("Volume (mm³)", fontsize=12)
         self.volume_ax.set_title("Volume Over Time", fontsize=14, fontweight='bold')
         self.volume_ax.grid(True, alpha=0.3)
-        self.volume_ax.tick_params(labelsize=10)  # Tick labels to hơn
+        self.volume_ax.tick_params(labelsize=10)  # Larger tick labels
         
         volume_layout.addWidget(self.volume_canvas)
         self.graph_tabs.addTab(volume_tab, "📊 Volume")
@@ -445,7 +454,7 @@ class VideoSegmentationApp(QMainWindow):
                 df.to_csv(file_path, index=False)
                 QMessageBox.information(self, "Success", f"Data exported to {file_path}")
             except ImportError:
-                # Fallback nếu không có pandas
+                # Fallback if pandas is not available
                 with open(file_path, 'w') as f:
                     f.write("Time (s),Diameter (mm),Volume (mm³)\n")
                     for i in range(len(self.times)):
@@ -579,7 +588,7 @@ class VideoSegmentationApp(QMainWindow):
             return
             
         self.current_frame = frame
-        self.current_frame_number += 4
+        self.current_frame_number += self.frame_skip
         self.current_time = self.current_frame_number / self.fps
         
         # Apply segmentation and calculate measurements
@@ -630,47 +639,56 @@ class VideoSegmentationApp(QMainWindow):
         
     def calculate_volume_integration(self):
         """
-        Calculate volume by integrating circular cross-sections along the length
-        Using disk method: V = ∫ π * r(x)² dx
+        Calculate volume by integrating circular cross-sections along the length.
+        Vectorized for performance using NumPy. V = ∫ π * r(x)² dx.
         """
         if self.current_mask is None:
             return 0.0
-            
-        total_volume = 0.0
-        slice_thickness = self.calibration_factor  # thickness of each pixel slice in mm
-        
-        # Integrate along x-axis (length of the object)
-        for x in range(self.current_mask.shape[1]):
-            ys = np.where(self.current_mask[:, x] == 255)[0]
-            if len(ys) > 0:
-                # Calculate radius at this x position
-                diameter_pixels = ys.max() - ys.min() + 1
-                diameter_mm = diameter_pixels * self.calibration_factor
-                radius_mm = diameter_mm / 2
-                
-                # Calculate cross-sectional area (π * r²)
-                cross_sectional_area = np.pi * (radius_mm ** 2)
-                
-                # Add volume of this thin slice (area * thickness)
-                slice_volume = cross_sectional_area * slice_thickness
-                total_volume += slice_volume
-                
+
+        # Create a boolean mask where True indicates a vessel pixel
+        mask_bool = self.current_mask == 255
+
+        # Find the y-coordinates of the top and bottom edges of the mask for each column
+        # np.argmax finds the first True index. We can find the last by reversing the array.
+        first_y = np.argmax(mask_bool, axis=0)
+        last_y = self.current_mask.shape[0] - 1 - np.argmax(mask_bool[::-1, :], axis=0)
+
+        # Calculate the diameter in pixels for each column where the mask is present
+        diameter_pixels = last_y - first_y + 1
+        # Correct for columns with no mask pixels (where first_y and last_y would be 0)
+        diameter_pixels[~mask_bool.any(axis=0)] = 0
+
+        # Convert diameters to radii in mm
+        radii_mm = (diameter_pixels * self.calibration_factor) / 2.0
+
+        # Calculate the total volume by summing the volumes of all cylindrical slices
+        # Volume of one slice = π * r² * thickness. Here thickness is one pixel wide.
+        slice_thickness_mm = self.calibration_factor
+        total_volume = np.sum(np.pi * (radii_mm ** 2) * slice_thickness_mm)
+
         return total_volume
             
     def calculate_diameter(self, mask):
-        max_diameter = 0.0
-        best_x = 0
-        
-        for x in range(mask.shape[1]):
-            ys = np.where(mask[:, x] == 255)[0]
-            if len(ys) > 0:
-                diameter = ys.max() - ys.min() + 1
-                if diameter > max_diameter:
-                    max_diameter = diameter
-                    best_x = x
-                    
-        return max_diameter, best_x
-    
+        """Calculates the maximum diameter of the mask in a vectorized way."""
+        if self.current_mask is None or not self.current_mask.any():
+            return 0.0, 0
+
+        mask_bool = self.current_mask == 255
+
+        # Find the y-coordinates of the top and bottom edges for each column
+        first_y = np.argmax(mask_bool, axis=0)
+        last_y = self.current_mask.shape[0] - 1 - np.argmax(mask_bool[::-1, :], axis=0)
+
+        # Calculate diameters for all columns where the mask is present
+        diameters = last_y - first_y + 1
+        diameters[~mask_bool.any(axis=0)] = 0
+
+        # Find the maximum diameter and its corresponding x-coordinate
+        max_diameter = np.max(diameters)
+        best_x = np.argmax(diameters)
+
+        return max_diameter, int(best_x)
+
     def calculate_manual_diameter(self, mask, x):
         ys = np.where(mask[:, x] == 255)[0]
         if len(ys) == 0:
@@ -698,16 +716,12 @@ class VideoSegmentationApp(QMainWindow):
             cv2.line(display_frame, (0, min_y), (self.video_width, min_y), (0, 0, 255), 1)
             cv2.line(display_frame, (0, max_y), (self.video_width, max_y), (0, 0, 255), 1)
         
-        # Convert to QImage and display - FIX: Scale ngay từ đầu với kích thước cố định
+        # Convert to QImage and display - FIX: Scale from the beginning with a fixed size
         height, width, channel = display_frame.shape
         bytes_per_line = 3 * width
         q_image = QImage(display_frame.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
-        
-        # Scale image to fit FIXED label size (640x480) - giữ tỷ lệ khung hình
-        target_size = self.video_label.size()  # Luôn là 640x480
         pixmap = QPixmap.fromImage(q_image)
-        scaled_pixmap = pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.video_label.setPixmap(scaled_pixmap)
+        self.video_label.setPixmap(pixmap)
         
         # Update measurement labels
         self.diameter_label.setText(f"Diameter: {self.current_diameter:.2f} mm")
@@ -750,7 +764,7 @@ class VideoSegmentationApp(QMainWindow):
             current_time_str = self.format_time(self.current_time)
             total_time_str = self.format_time(self.total_frames / self.fps)
             
-            # Cập nhật các label thời gian (gọn gàng hơn)
+            # Update the time labels (more concise)
             self.time_label.setText(f"Time: {current_time_str} / {total_time_str}")
             self.time_display_label.setText(f"Current Time: {current_time_str}")
             self.time_control_label.setText(f"{current_time_str} / {total_time_str}")

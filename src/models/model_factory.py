@@ -36,16 +36,7 @@ def get_model(config: ModelConfig) -> nn.Module:
     
     return model
 
-def get_baseline_model() -> nn.Module:
-    """Get the baseline model"""
-    config = ModelConfig(
-        name="unetpp",
-        encoder="resnet34",
-        encoder_weights="imagenet",
-        activation="sigmoid",
-        params=None
-    )
-    return get_model(config)
+
 
 def load_checkpoint(
     model: nn.Module,
@@ -63,7 +54,7 @@ def load_checkpoint(
         else:
             device = "cpu"
     
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=torch.device(device), weights_only=True)
     # Support both raw state_dict and dict with 'state_dict'
     if isinstance(ckpt, dict) and 'state_dict' in ckpt:
         state_dict = ckpt['state_dict']
@@ -72,7 +63,14 @@ def load_checkpoint(
     # Handle DataParallel/DistributedDataParallel prefixes
     if isinstance(state_dict, dict) and any(k.startswith('module.') for k in state_dict.keys()):
         state_dict = {k[7:]: v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict, strict=False)
+
+    # Filter out unnecessary keys from the loaded state_dict
+    model_state_dict = model.state_dict()
+    filtered_state_dict = {k: v for k, v in state_dict.items() if k in model_state_dict}
+
+    # Load the filtered state dict
+    model.load_state_dict(filtered_state_dict, strict=False)
+
     model = model.to(device)
     return model
 

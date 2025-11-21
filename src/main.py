@@ -18,6 +18,9 @@ import os
 import json
 import argparse
 from pathlib import Path
+import platform
+from typing import Optional
+from copy import deepcopy
 
 import torch
 from torch.utils.data import DataLoader
@@ -26,7 +29,7 @@ from src.config import ExperimentConfig
 from src.models.model_factory import get_model, save_checkpoint, load_checkpoint
 from src.data.datasets import LabeledVesselDataset, PseudoLabeledDataset, VideoDataset
 from src.training.trainer import Trainer, train_kfold
-from src.training.mean_teacher import MeanTeacherTrainer, create_mean_teacher_models
+from src.training.mean_teacher import MeanTeacherTrainer
 from src.utils.logging import TrainingLogger
 from src.utils.augment import (
     create_train_transform,
@@ -79,7 +82,6 @@ def train_baseline(config: ExperimentConfig, logger: TrainingLogger):
     # Save final model
     save_path = os.path.join(config.paths.model_dir, "baseline.pth")
     save_checkpoint(model, save_path)
-    logger.log_model(save_path)
     print(f"Saved baseline model to {save_path}")
     
     return model
@@ -98,47 +100,56 @@ def train_final(config: ExperimentConfig, logger: TrainingLogger):
     # Transforms
     train_transform = create_train_transform(p=config.augmentation.train_prob)
     val_transform = create_val_transform()
-    weak_transform = create_weak_transform(p=0.3)  # Cho student
-    strong_transform = create_strong_transform(p=0.5)  # Cho teacher/unlabeled
+    weak_transform = create_weak_transform(p=0.3)  # For student
+    strong_transform = create_strong_transform(p=0.5)  # For teacher/unlabeled
 
     # Datasets: labeled data
-    labeled_ds = LabeledVesselDataset(
+    # Dataset for training (with augmentations)
+    train_labeled_ds = LabeledVesselDataset(
         image_root=config.paths.labeled_dir,
         mask_dir=config.paths.labeled_masks_dir,
         transform=train_transform,
         target_size=config.data.image_size,
     )
 
-    if len(labeled_ds) == 0:
+    if len(train_labeled_ds) == 0:
         raise RuntimeError(f"No labeled data found in {config.paths.labeled_dir}")
 
-    # Split labeled data thành train/val
-    from torch.utils.data import DataLoader, random_split
-    total_labeled = len(labeled_ds)
-    val_len = max(1, int(0.1 * total_labeled))
-    train_labeled_len = total_labeled - val_len
-    train_labeled_set, val_set = random_split(
-        labeled_ds, [train_labeled_len, val_len]
+    # Dataset for validation (without augmentations)
+    val_ds = LabeledVesselDataset(
+        image_root=config.paths.labeled_dir,
+        mask_dir=config.paths.labeled_masks_dir,
+        transform=val_transform, # Use validation transforms
+        target_size=config.data.image_size,
     )
 
-    # Unlabeled dataset (cho Mean Teacher)
-    # Note: Trong Mean Teacher, cả student và teacher đều nhận cùng unlabeled image
-    # nhưng với augmentations khác nhau. Tuy nhiên, trong implementation này,
-    # chúng ta sẽ dùng weak_transform cho dataset và apply strong augmentation
-    # trong training loop nếu cần (hoặc dùng strong_transform cho teacher)
+    # Split the indices, then create subsets to ensure transforms are applied correctly
+    from torch.utils.data import DataLoader, random_split
+    total_labeled = len(train_labeled_ds)
+    val_len = max(1, int(0.1 * total_labeled))
+    train_labeled_len = total_labeled - val_len
+    train_indices, val_indices = random_split(range(total_labeled), [train_labeled_len, val_len])
+    train_labeled_set = torch.utils.data.Subset(train_labeled_ds, train_indices)
+    val_set = torch.utils.data.Subset(val_ds, val_indices)
+
+    # Unlabeled dataset (for Mean Teacher)
+    # Note: In Mean Teacher, both student and teacher receive the same unlabeled image
+    # but with different augmentations. However, in this implementation,
+    # we will use weak_transform for the dataset and apply strong augmentation
+    # in the training loop if needed (or use strong_transform for the teacher)
     unlabeled_ds = None
-    # Thử tìm unlabeled data từ nhiều nguồn
+    # Try to find unlabeled data from multiple sources
     unlabeled_dirs = [
         config.paths.unlabeled_dir,  # data/frames/<type>
-        config.paths.labeled_dir,  # Fallback: dùng labeled data (nếu không có unlabeled)
+        config.paths.labeled_dir,  # Fallback: use labeled data (if no unlabeled data is available)
     ]
     
     for unlabeled_dir in unlabeled_dirs:
         if os.path.exists(unlabeled_dir) and os.path.isdir(unlabeled_dir):
-            # Dùng weak_transform cho unlabeled dataset (student sẽ dùng)
+            # Use weak_transform for the unlabeled dataset (will be used by the student)
             unlabeled_ds = VideoDataset(
                 image_root=unlabeled_dir,
-                transform=weak_transform,  # Weak augmentation cho student
+                transform=weak_transform,  # Weak augmentation for the student
                 target_size=config.data.image_size,
             )
             if len(unlabeled_ds) > 0:
@@ -173,10 +184,10 @@ def train_final(config: ExperimentConfig, logger: TrainingLogger):
         num_workers=config.data.num_workers,
     )
 
-    # Model và trainer
+    # Model and trainer
     base_model = get_model(config.model)
     
-    # Load baseline model làm điểm khởi đầu (QUAN TRỌNG!)
+    # Load baseline model as a starting point (IMPORTANT!)
     baseline_path = os.path.join(config.paths.model_dir, "baseline.pth")
     if not os.path.exists(baseline_path):
         raise RuntimeError(
@@ -187,10 +198,16 @@ def train_final(config: ExperimentConfig, logger: TrainingLogger):
     base_model = load_checkpoint(base_model, baseline_path, device=config.training.device)
     print("✓ Loaded baseline model weights")
     
-    # Tạo student và teacher models từ baseline
-    student_model, teacher_model = create_mean_teacher_models(base_model)
+    # Create student and teacher models directly from the baseline
+    student_model = base_model
+    teacher_model = deepcopy(base_model)
     
-    # Optimizer chỉ cho student
+    # Freeze teacher model parameters (it's updated via EMA, not gradients)
+    for param in teacher_model.parameters():
+        param.requires_grad = False
+    print("✓ Created student and teacher models for Mean Teacher training.")
+    
+    # Optimizer for student only
     optimizer = torch.optim.Adam(
         student_model.parameters(),
         lr=config.training.learning_rate
@@ -215,22 +232,20 @@ def train_final(config: ExperimentConfig, logger: TrainingLogger):
         device=config.training.device
     )
     
-    # Training với Mean Teacher
+    # Training with Mean Teacher
     model = trainer.train(labeled_loader, unlabeled_loader, val_loader, scheduler)
     
-    # Model là teacher (tốt hơn student)
+    # The model is the teacher (better than the student)
     print("✓ Mean Teacher training completed. Using teacher model (best).")
 
     # Save final model
     os.makedirs(config.paths.model_dir, exist_ok=True)
     save_path = os.path.join(config.paths.model_dir, "final.pth")
     save_checkpoint(model, save_path)
-    logger.log_model(save_path)
     print(f"Saved final model to {save_path}")
 
     return model
 
-import platform
 import psutil
 def log_system_info(logger, device):
     """Log system information based on the selected device."""
@@ -249,34 +264,39 @@ def log_system_info(logger, device):
     logger.log_message("--------------------------")
 
 from src.visualization import visualize_predictions, visualize_evaluation_table
-
-def run_visualize_eval(config: ExperimentConfig):
-    """Find the latest log and generate an evaluation table."""
+def run_visualize_eval(config: ExperimentConfig, specific_log_dir: Optional[str] = None):
+    """Generate an evaluation table from a specified or the latest log directory."""
     print(f"\n=== Generating Evaluation Table for type '{config.type}' ===")
-    log_dir = config.paths.log_dir
-    if not os.path.isdir(log_dir):
-        print(f"Log directory not found: {log_dir}")
+
+    target_log_dir = specific_log_dir
+    if target_log_dir is None:
+        # If no specific log is given, find the most recent one
+        base_log_dir = config.paths.log_dir
+        if not os.path.isdir(base_log_dir):
+            print(f"Log directory not found: {base_log_dir}")
+            return
+        try:
+            target_log_dir = max(
+                [os.path.join(base_log_dir, d) for d in os.listdir(base_log_dir) if os.path.isdir(os.path.join(base_log_dir, d))],
+                key=os.path.getmtime
+            )
+        except ValueError:
+            print(f"No training logs found in {base_log_dir}")
+            return
+    
+    if not os.path.isdir(target_log_dir):
+        print(f"Specified log directory does not exist: {target_log_dir}")
         return
 
-    # Find the most recent training log directory
-    try:
-        latest_log_dir = max(
-            [os.path.join(log_dir, d) for d in os.listdir(log_dir) if os.path.isdir(os.path.join(log_dir, d))],
-            key=os.path.getmtime
-        )
-    except ValueError:
-        print(f"No training logs found in {log_dir}")
-        return
-
-    metrics_file = os.path.join(latest_log_dir, 'metrics.csv')
+    metrics_file = os.path.join(target_log_dir, 'metrics.csv')
     if not os.path.exists(metrics_file):
-        print(f"metrics.csv not found in the latest log directory: {latest_log_dir}")
+        print(f"metrics.csv not found in the specified log directory: {target_log_dir}")
         return
 
     print(f"Using metrics from: {metrics_file}")
 
     # Define output path inside the typed model directory
-    output_path = os.path.join(config.paths.model_dir, f"evaluation_summary_{os.path.basename(latest_log_dir)}.txt")
+    output_path = os.path.join(config.paths.model_dir, f"evaluation_summary_{os.path.basename(target_log_dir)}.txt")
 
     # Generate the table
     visualize_evaluation_table(metrics_file, output_path)
@@ -300,6 +320,12 @@ def main():
         "--small-test",
         action="store_true",
         help="Run on small test dataset"
+    )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="Specify a log directory for visualize_eval stage."
     )
     parser.add_argument(
         "--visualize",
@@ -328,16 +354,10 @@ def main():
         # This case should ideally not be reached due to choices in parser
         raise ValueError(f"Unknown stage: {args.stage}")
 
-    # Auto-detect and set device
-    device = config.training.device
-    if device == "auto":
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-    config.training.device = device
+    # On Windows, force num_workers to 0 to avoid multiprocessing issues
+    if platform.system() == "Windows" and config.data.num_workers > 0:
+        print("Running on Windows, setting num_workers to 0 to avoid multiprocessing issues.")
+        config.data.num_workers = 0
 
     if args.early_stop_patience is not None:
         config.training.early_stop_patience = args.early_stop_patience
@@ -367,6 +387,18 @@ def main():
         logger = TrainingLogger(config.paths.log_dir)
         print("\n" + "="*60)
         print("SYSTEM INFORMATION")
+        
+        # Auto-detect and set device right before logging and training
+        device = config.training.device
+        if device == "auto":
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+        config.training.device = device
+
         print("="*60)
         log_system_info(logger, device)
         print("="*60 + "\n")
@@ -404,6 +436,17 @@ def main():
                 # Re-apply early stop patience if overridden
                 if args.early_stop_patience is not None:
                     config.training.early_stop_patience = args.early_stop_patience
+                
+                # Re-run device detection for the new config
+                device = config.training.device
+                if device == "auto":
+                    if torch.cuda.is_available():
+                        device = "cuda"
+                    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                        device = "mps"
+                    else:
+                        device = "cpu"
+                config.training.device = device
             
             model = train_final(config, logger)
             if args.visualize and model is not None:
@@ -427,7 +470,7 @@ def main():
                 print(f"Saved visualizations to {fig_path}")
 
         if args.stage == "visualize_eval":
-            run_visualize_eval(config)
+            run_visualize_eval(config, specific_log_dir=args.log_dir)
             
     except Exception as e:
         print(f"An error occurred during the pipeline execution: {str(e)}")
