@@ -142,10 +142,10 @@ Bạn cũng có thể chạy riêng từng giai đoạn.
 **Toàn bộ quy trình (Stitch-ViT):**
 ```bash
 # Đầu tiên, chạy Giai đoạn 1 với file config của nó
-python -m src.main all --config config_stage1_stitchvit.json --visualize
+python -m src.main baseline --config config_stage1_stitchvit.json --visualize
 
 # Sau đó, chạy Giai đoạn 2 với file config tương ứng (nó sẽ sử dụng trọng số từ Giai đoạn 1)
-python -m src.main all --config config_stage2_stitchvit.json --visualize
+python -m src.main final --config config_stage2_stitchvit.json --visualize
 ```
 
 ### Các cờ (flag) bổ sung

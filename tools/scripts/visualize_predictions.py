@@ -41,7 +41,7 @@ def visualize_model_predictions(model_path, output_path, config, device):
     fig = visualize_predictions(
         model,
         dataset,
-        num_samples=4,
+        num_samples=16,
         device=device,
         use_post_process=True
     )

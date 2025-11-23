@@ -142,10 +142,10 @@ To use the **CTO Stitch-ViT** model, specify its configuration files using the `
 **Full Pipeline (Stitch-ViT):**
 ```bash
 # First, run Stage 1 with its config
-python -m src.main all --config config_stage1_stitchvit.json --visualize
+python -m src.main baseline --config config_stage1_stitchvit.json --visualize
 
 # Then, run Stage 2 with its config (it will use the weights from Stage 1)
-python -m src.main all --config config_stage2_stitchvit.json --visualize
+python -m src.main final --config config_stage2_stitchvit.json --visualize
 ```
 
 ### Additional Flags
