@@ -1,13 +1,13 @@
 """
-Mean Teacher Implementation cho Stage 3
-Student model được train, Teacher model là EMA của Student
-Consistency loss giữa student và teacher predictions
+This module implements the Mean Teacher algorithm for semi-supervised learning.
+The student model is trained via gradient descent, while the teacher model's weights
+are an Exponential Moving Average (EMA) of the student's weights. A consistency
+loss is enforced between the student's and teacher's predictions on unlabeled data.
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from copy import deepcopy
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
@@ -15,13 +15,28 @@ from ..utils.logging import TrainingLogger
 from src.utils.metrics import (
     dice_coefficient, iou_score, pixel_accuracy, boundary_f1_score, avg_score
 )
-from src.training.losses import BCELoss, CombinedLoss, DeepSupervisionLoss
+from src.training.losses import DeepSupervisionLoss
 from src.config import ModelConfig, TrainingConfig
 from src.training.trainer import Trainer
+        
+from itertools import cycle
 
 class MeanTeacherTrainer(Trainer):
     """
-    Trainer for Mean Teacher semi-supervised learning.
+    Extends the base Trainer to implement the Mean Teacher algorithm for
+    semi-supervised learning.
+
+    Attributes:
+        student_model (nn.Module): The primary model being trained with gradient descent.
+        teacher_model (nn.Module): The model whose weights are an EMA of the student's.
+                                   It provides more stable pseudo-labels.
+        optimizer (torch.optim.Optimizer): The optimizer for the student model.
+        consistency_loss (nn.Module): The loss function (e.g., MSE) used to measure
+                                      the difference between student and teacher predictions.
+        consistency_rampup (int): The number of epochs over which the consistency loss
+                                  weight is linearly increased to its full value.
+        consistency_weight (float): The maximum weight of the consistency loss.
+        ema_decay (float): The decay rate for the teacher model's EMA update.
     """
     def __init__(
         self,
@@ -33,177 +48,149 @@ class MeanTeacherTrainer(Trainer):
         logger: TrainingLogger,
         device: str = "cuda"
     ):
-        # Initialize the base Trainer with the student model
+        """
+        Initializes the MeanTeacherTrainer.
+
+        Args:
+            student_model (nn.Module): The student model instance.
+            teacher_model (nn.Module): The teacher model instance.
+            optimizer (torch.optim.Optimizer): Optimizer for the student model.
+            model_config (ModelConfig): Configuration for the model architecture.
+            config (TrainingConfig): Configuration for the training process.
+            logger (TrainingLogger): Logger for recording metrics.
+            device (str): The computing device.
+        """
+        # Initialize the base Trainer with the student model.
+        # The base class will handle device placement and criterion building.
         super().__init__(student_model, model_config, config, logger, device)
         
-        # Mean Teacher specific attributes
         self.student_model = self.model  # Rename for clarity
-        self.teacher_model = teacher_model
+        self.teacher_model = teacher_model.to(self.device)
         self.optimizer = optimizer
-        self.teacher_model = self.teacher_model.to(self.device)
 
+        # The teacher model should not be updated by gradients.
+        for param in self.teacher_model.parameters():
+            param.detach_()
+
+        # Loss for enforcing consistency between student and teacher predictions.
         self.consistency_loss = nn.MSELoss()
 
+        # Mean Teacher specific hyperparameters
         self.consistency_rampup = config.consistency_rampup
         self.consistency_weight = config.consistency_weight
         self.ema_decay = config.ema_decay
 
-    def update_teacher(self, alpha=None):
+    def update_teacher(self):
         """
-        Update teacher model bằng EMA của student
+        Update the teacher model's weights using an Exponential Moving Average (EMA)
+        of the student model's weights.
 
-        Teacher = alpha * Teacher + (1 - alpha) * Student
+        Formula: Teacher = ema_decay * Teacher + (1 - ema_decay) * Student
         """
-        if alpha is None:
-            alpha = self.ema_decay
-
-        # Update teacher weights bằng EMA
         with torch.no_grad():
             for teacher_param, student_param in zip(self.teacher_model.parameters(), self.student_model.parameters()):
-                teacher_param.data.mul_(alpha).add_(student_param.data, alpha=1 - alpha)
+                teacher_param.data.mul_(self.ema_decay).add_(student_param.data, alpha=1 - self.ema_decay)
     
-    def get_consistency_weight(self, epoch):
+    def get_consistency_weight(self, epoch: int) -> float:
         """
-        Ramp-up consistency weight từ 0 đến consistency_weight
+        Calculates the consistency loss weight with a linear ramp-up.
+        The weight increases from 0 to `self.consistency_weight` over `self.consistency_rampup` epochs.
+
+        Args:
+            epoch (int): The current training epoch.
+
+        Returns:
+            float: The calculated consistency weight for the current epoch.
         """
         if epoch < self.consistency_rampup:
-            # Ramp-up: epoch 0 → 0, epoch 1 → consistency_weight/rampup, ...
-            # Tránh chia cho 0 khi epoch = 0
-            if epoch == 0:
-                return 0.0
             return self.consistency_weight * (epoch / self.consistency_rampup)
         return self.consistency_weight
 
-    def train_epoch(self, train_loaders, optimizer, epoch):
+    def train_epoch(self, train_loaders: Tuple[DataLoader, DataLoader], optimizer: torch.optim.Optimizer, epoch: int) -> Dict[str, float]:
         """
-        Train một epoch với Mean Teacher
+        Performs a single training epoch for the Mean Teacher model.
+
+        This involves processing both labeled data for a supervised loss and
+        unlabeled data for a consistency loss.
 
         Args:
-            train_loaders: A tuple of (labeled_loader, unlabeled_loader)
-            optimizer: The optimizer for the student model.
-            epoch: Current epoch number
+            train_loaders (Tuple[DataLoader, DataLoader]): A tuple containing the
+                                                           (labeled_loader, unlabeled_loader).
+            optimizer (torch.optim.Optimizer): The optimizer for the student model.
+            epoch (int): The current epoch number.
+
+        Returns:
+            Dict[str, float]: A dictionary of training metrics for the epoch.
         """
         labeled_loader, unlabeled_loader = train_loaders
 
         self.student_model.train()
-        self.teacher_model.eval()  # Teacher luôn ở eval mode
+        self.teacher_model.eval()  # Teacher is always in evaluation mode.
         
-        total_loss = 0.0
-        total_supervised_loss = 0.0
-        total_consistency_loss = 0.0
+        total_loss, total_supervised_loss, total_consistency_loss = 0.0, 0.0, 0.0
         
-        # Consistency weight cho epoch này
         consistency_weight = self.get_consistency_weight(epoch)
         
-        # Update alpha for CombinedLoss if applicable (once per epoch)
-        if isinstance(self.criterion, CombinedLoss) or \
-           (isinstance(self.criterion, DeepSupervisionLoss) and isinstance(self.criterion.criterion, CombinedLoss)):
-            inner_loss = self.criterion.criterion if isinstance(self.criterion, DeepSupervisionLoss) else self.criterion
-            inner_loss.update_alpha(epoch)
-
-        # Iterate qua labeled và unlabeled data
-        # Ensure we can loop through the smaller dataset if datasets have different lengths
+        # Ensure we can iterate through the larger dataset completely.
+        # The smaller dataset will be re-shuffled and iterated as needed.
         if len(labeled_loader) > len(unlabeled_loader):
-            unlabeled_iter = iter(torch.utils.data.dataloader.DataLoader(unlabeled_loader.dataset, batch_size=unlabeled_loader.batch_size, shuffle=True, num_workers=unlabeled_loader.num_workers, pin_memory=True))
+            num_batches = len(labeled_loader)
             labeled_iter = iter(labeled_loader)
-            num_batches = len(labeled_loader)
+            unlabeled_iter = cycle(iter(unlabeled_loader))
         else:
-            labeled_iter = iter(torch.utils.data.dataloader.DataLoader(labeled_loader.dataset, batch_size=labeled_loader.batch_size, shuffle=True, num_workers=labeled_loader.num_workers, pin_memory=True))
+            num_batches = len(unlabeled_loader)
             unlabeled_iter = iter(unlabeled_loader)
-            num_batches = len(unlabeled_loader)
+            labeled_iter = cycle(iter(labeled_loader))
         
-        # Fallback if one loader is missing
-        if not labeled_loader:
-            num_batches = len(unlabeled_loader)
-        if not unlabeled_loader:
-            num_batches = len(labeled_loader)
-        
-        pbar = tqdm(range(num_batches), desc=f"Epoch {epoch+1}")
-        
-        for batch_idx in pbar:
-            # Initialize losses
-            has_labeled = False
-            has_unlabeled = False
-            
-            # 1. Process labeled data (supervised loss)
-            supervised_loss = None
-            
-            if labeled_loader:
+        with tqdm(range(num_batches), desc=f"Epoch {epoch+1}/{self.config.epochs} [TRAIN]") as pbar:
+            for batch_idx in pbar:
+                supervised_loss, consistency_loss = None, None
+
+                # 1. Supervised Loss (from labeled data)
                 try:
                     labeled_batch = next(labeled_iter)
-                    if isinstance(labeled_batch, dict):
-                        images = labeled_batch['image'].to(self.device)
-                        masks = labeled_batch['mask'].to(self.device)
-                    elif isinstance(labeled_batch, (list, tuple)) and len(labeled_batch) >= 2:
-                        images, masks = labeled_batch[0], labeled_batch[1]
-                        images = images.to(self.device)
-                        masks = masks.to(self.device)
-                    else:
-                        continue
-                    
-                    # Student prediction
+                    images = labeled_batch['image'].to(self.device)
+                    masks = labeled_batch['mask'].to(self.device)
                     student_pred = self.student_model(images)
-                    
-                    # Supervised loss
                     supervised_loss = self.criterion(student_pred, masks.float())
-                    has_labeled = True
-                    
                 except StopIteration:
-                    continue # Should not happen with the new iterator logic
-            
-            # 2. Process unlabeled data (consistency loss)
-            consistency_loss = None
-            
-            if unlabeled_loader and consistency_weight > 0:
-                try:
-                    unlabeled_batch = next(unlabeled_iter)
-                    if isinstance(unlabeled_batch, dict):
-                        images_unlabeled = unlabeled_batch['image'].to(self.device)
-                    elif isinstance(unlabeled_batch, (list, tuple)) and len(unlabeled_batch) > 0:
-                        images_unlabeled = unlabeled_batch[0].to(self.device)
-                    else:
-                        continue
-                    
-                    # Student: weak augmentation (đã apply trong dataset)
-                    student_pred_unlabeled = self.student_model(images_unlabeled)
-                    if isinstance(student_pred_unlabeled, (list, tuple)):
-                        student_pred_unlabeled = student_pred_unlabeled[0] # Use main output
-                    student_prob = torch.sigmoid(student_pred_unlabeled)
-                    
-                    # Teacher: same image với no_grad
-                    with torch.no_grad():
-                        teacher_pred_unlabeled = self.teacher_model(images_unlabeled)
-                        if isinstance(teacher_pred_unlabeled, (list, tuple)):
-                            teacher_pred_unlabeled = teacher_pred_unlabeled[0] # Use main output
-                        teacher_prob = torch.sigmoid(teacher_pred_unlabeled)
-                    
-                    # Consistency loss: MSE giữa student và teacher probabilities
-                    consistency_loss = F.mse_loss(student_prob, teacher_prob)
-                    has_unlabeled = True
-                    
-                except StopIteration:
-                    continue # Should not happen with the new iterator logic
-            
-            # 3. Total loss (chỉ backward nếu có ít nhất 1 loss)
-            if has_labeled or has_unlabeled:
-                if supervised_loss is not None and consistency_loss is not None:
-                    total_loss_batch = supervised_loss + consistency_weight * consistency_loss
-                elif supervised_loss is not None:
-                    total_loss_batch = supervised_loss
-                elif consistency_loss is not None:
-                    total_loss_batch = consistency_weight * consistency_loss
-                else:
-                    continue
-                
-                # 4. Backward và update student
-                optimizer.zero_grad()
-                total_loss_batch.backward()
-                optimizer.step()
+                    pass # Handled by the iterator recreation logic
 
-                # 5. Update teacher (EMA) - sau mỗi batch
+                # 2. Consistency Loss (from unlabeled data)
+                if consistency_weight > 0:
+                    try:
+                        unlabeled_batch = next(unlabeled_iter)
+                        images_unlabeled = unlabeled_batch['image'].to(self.device)
+                        
+                        # Get student's prediction on unlabeled data
+                        student_pred_unlabeled = self.student_model(images_unlabeled)
+                        student_prob = torch.sigmoid(student_pred_unlabeled[0] if isinstance(student_pred_unlabeled, (list, tuple)) else student_pred_unlabeled)
+                        
+                        # Get teacher's prediction (pseudo-label) with no gradient
+                        with torch.no_grad():
+                            teacher_pred_unlabeled = self.teacher_model(images_unlabeled)
+                            teacher_prob = torch.sigmoid(teacher_pred_unlabeled[0] if isinstance(teacher_pred_unlabeled, (list, tuple)) else teacher_pred_unlabeled)
+                        
+                        consistency_loss = self.consistency_loss(student_prob, teacher_prob)
+                    except StopIteration:
+                        pass # Handled by the iterator recreation logic
+
+                # 3. Combine losses and update student model
+                total_loss_batch = torch.tensor(0.0, device=self.device)
+                if supervised_loss is not None:
+                    total_loss_batch += supervised_loss
+                if consistency_loss is not None:
+                    total_loss_batch += consistency_weight * consistency_loss
+                
+                if total_loss_batch.item() > 0:
+                    optimizer.zero_grad()
+                    total_loss_batch.backward()
+                    optimizer.step()
+
+                # 4. Update teacher model weights via EMA
                 self.update_teacher()
                 
-                # 6. Logging
+                # 5. Log batch metrics
                 total_loss += total_loss_batch.item()
                 if supervised_loss is not None:
                     total_supervised_loss += supervised_loss.item()
@@ -211,106 +198,56 @@ class MeanTeacherTrainer(Trainer):
                     total_consistency_loss += consistency_loss.item()
                 
                 pbar.set_postfix({
-                    'loss': total_loss_batch.item(),
-                    'sup': supervised_loss.item() if supervised_loss is not None else 0.0,
-                    'cons': consistency_loss.item() if consistency_loss is not None else 0.0,
-                    'lambda': consistency_weight
+                    'loss': f'{total_loss_batch.item():.4f}',
+                    'sup': f'{supervised_loss.item():.4f}' if supervised_loss else '0',
+                    'cons': f'{consistency_loss.item():.4f}' if consistency_loss else '0',
+                    'λ': f'{consistency_weight:.2f}'
                 })
-            
-        
-        # Average losses
-        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-        avg_supervised = total_supervised_loss / num_batches if num_batches > 0 else 0.0
-        avg_consistency = total_consistency_loss / num_batches if num_batches > 0 else 0.0
         
         return {
-            'loss': avg_loss,
-            'supervised_loss': avg_supervised,
-            'consistency_loss': avg_consistency,
+            'loss': total_loss / num_batches,
+            'supervised_loss': total_supervised_loss / num_batches,
+            'consistency_loss': total_consistency_loss / num_batches,
             'consistency_weight': consistency_weight
         }
     
-    def validate(self, val_loader):
+    def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         """
-        Validate với teacher model (teacher thường tốt hơn student)
+        Validates the model. For Mean Teacher, validation is performed on the
+        teacher model, as it's expected to be more stable and perform better.
+
+        Args:
+            val_loader (DataLoader): DataLoader for the validation set.
+
+        Returns:
+            Dict[str, float]: A dictionary of validation metrics.
         """
-        self.teacher_model.eval()
-        
-        total_loss = 0.0
-        all_preds = []
-        all_targets = []
-        
-        with torch.no_grad():
-            for batch in val_loader:
-                # Skip if batch is empty or invalid
-                if not batch:
-                    continue
-
-                if isinstance(batch, dict):
-                    images = batch['image'].to(self.device)
-                    masks = batch['mask'].to(self.device)
-                elif isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                    images, masks = batch[0], batch[1]
-                    images = images.to(self.device)
-                    masks = masks.to(self.device)
-                else:
-                    continue
-                
-                # Dùng teacher để validate
-                predictions = self.teacher_model(images)
-                
-                # For deep supervision, use the main output for validation
-                if isinstance(predictions, (list, tuple)):
-                    main_prediction = predictions[0]
-                else:
-                    main_prediction = predictions
-                
-                # During validation, use the inner criterion to avoid deep supervision weights.
-                if isinstance(self.criterion, DeepSupervisionLoss):
-                    loss = self.criterion.criterion(main_prediction, masks.float())
-                else:
-                    loss = self.criterion(main_prediction, masks.float())
-
-                total_loss += loss.item()
-                
-                # Collect predictions và targets cho metrics
-                probs = torch.sigmoid(main_prediction)
-                preds = (probs > 0.5).float()
-                all_preds.append(preds)
-                all_targets.append(masks)
-        
-        # Compute metrics
-        all_preds = torch.cat(all_preds, dim=0)
-        all_targets = torch.cat(all_targets, dim=0)
-        
-        dice = dice_coefficient(all_preds, all_targets)
-        iou = iou_score(all_preds, all_targets)
-        pixel_acc = pixel_accuracy(all_preds, all_targets)
-        boundary_f1 = boundary_f1_score(all_preds, all_targets)
-        avg_sc = avg_score(iou, dice, pixel_acc, boundary_f1)  # Đúng thứ tự: iou, dice, pixel_acc, boundary_f1
-        
-        avg_loss = total_loss / len(val_loader) if len(val_loader) > 0 else 0.0
-        
-        return {
-            'val_loss': avg_loss,
-            'val_dice': dice,
-            'val_iou': iou,
-            'val_pixel_acc': pixel_acc,
-            'val_boundary_f1': boundary_f1,
-            'val_avg': avg_sc
-        }
+        # Validate using the more stable teacher model
+        return super().validate(val_loader, model_to_validate=self.teacher_model)
     
     def train(self, labeled_loader: DataLoader, unlabeled_loader: Optional[DataLoader], val_loader: DataLoader, scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None) -> nn.Module:
         """
-        Override the main training loop to handle Mean Teacher's specific epoch training.
-        This method now prepares the arguments and calls the base `Trainer.train` method,
-        which handles the main epoch loop, validation, logging, and early stopping.
+        Orchestrates the main training loop for the Mean Teacher setup.
+
+        This method adapts the base `Trainer.train` loop by passing both labeled and
+        unlabeled data loaders to the `train_epoch` method.
+
+        Args:
+            labeled_loader (DataLoader): DataLoader for labeled data.
+            unlabeled_loader (Optional[DataLoader]): DataLoader for unlabeled data.
+            val_loader (DataLoader): DataLoader for validation data.
+            scheduler (Optional[_LRScheduler]): Learning rate scheduler.
+
+        Returns:
+            nn.Module: The best teacher model found during training.
         """
-        # The base `train` method expects `train_loader` as the first argument.
-        # We pass a tuple of loaders, and our overridden `train_epoch` will know how to handle it.
         train_loaders = (labeled_loader, unlabeled_loader)
         
-        # Call the parent's train method
+        # The base `train` method handles the epoch loop, validation, logging, and early stopping.
+        # Our overridden `train_epoch` and `validate` methods ensure the Mean Teacher
+        # logic is correctly applied within that loop.
         super().train(train_loaders, val_loader, self.optimizer, scheduler)
         
-        return self.teacher_model  # Trả về teacher model (tốt hơn student)
+        # Return the teacher model, as it's the final, more stable artifact.
+        print("--- Training finished. Returning the best TEACHER model. ---")
+        return self.teacher_model
