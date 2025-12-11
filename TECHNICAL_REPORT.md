@@ -11,6 +11,8 @@
 
 **Presentation Video:** [Link to your 30-minute presentation video will be here]
 
+**Project Resources (Dataset, Models, Results):** [Google Drive Link](https://drive.google.com/drive/folders/1ORzUm1P5PK35O_L4YQ2L_IgIZZbkXi-0)
+
 ---
 
 ### **Abstract**
@@ -88,6 +90,7 @@ The primary model is **CTO-Net**, a custom U-Net-like architecture.
 -   **Backbone:** We use **Res2Net-50** as the encoder. Res2Net enhances the standard ResNet by constructing hierarchical residual-like connections within a single residual block, allowing it to represent features at multiple scales.
 -   **Decoder:** The decoder consists of several upsampling blocks that progressively reconstruct the segmentation mask.
 -   **Experimental Variant (CTO Stitch-ViT):** We also developed an experimental model that incorporates Vision Transformer (ViT) blocks into the decoder. The goal is to leverage the self-attention mechanism to better capture global context, which is potentially beneficial for segmenting long, continuous vessel structures.
+-   **Deep Supervision:** The model employs deep supervision by generating predictions from multiple decoder stages (scales 1/4, 1/8, 1/16) and the edge attention module. This helps in learning robust features at different scales and alleviates the vanishing gradient problem during training.
 
 #### **4.3. Semi-Supervised Learning: The Mean Teacher Method**
 The Mean Teacher method is a powerful SSL technique.
@@ -100,6 +103,7 @@ The total loss for the student model is a weighted sum of three components:
 1.  **Binary Cross-Entropy (BCE) Loss:** A standard loss for binary classification tasks.
 2.  **Dice Loss:** Directly optimizes the Dice Score (F1-score), which is a common metric for segmentation tasks as it is robust to class imbalance.
 3.  **Boundary Loss:** A custom loss term that penalizes errors at the boundaries of the vessels. This encourages the model to produce sharper and more precise edges.
+4.  **Deep Supervision Loss:** The total training loss is a weighted sum of the losses calculated at the main output and the auxiliary outputs, ensuring that intermediate layers also learn meaningful representations.
 
 ---
 
@@ -136,24 +140,39 @@ The codebase is organized into modules for clarity and maintainability.
 
 #### **6.1. Evaluation Metrics**
 Performance was measured using Dice Score, Intersection over Union (IoU), Precision, and Recall.
+The Boundary F1 score was also used to specifically evaluate the accuracy of the segmented vessel edges.
 
-#### **6.2. Training Performance**
-The training curves for the CTO-Net model on the Human dataset show clear convergence and the benefit of Stage 2.
 
-**Stage 1 vs. Stage 2 Training Curves:**
-![Baseline Curves](logs/Human/cto/Human_20251122_234019_detailed_curves.png)
-![Final Curves](logs/Human/cto/Human_20251123_000145_detailed_curves.png)
-*Figure 2: Dice and Loss curves for Stage 1 (left) and Stage 2 (right). Stage 2 shows continued stability and learning on a much larger dataset.*
+#### **6.2. Quantitative Comparison**
+The table below summarizes the final performance (Stage 2) of both **CTO-Net** and the experimental **CTO Stitch-ViT** across both the Human and Rat datasets.
 
-#### **6.3. Segmentation Quality**
-Visual comparison reveals a dramatic improvement in segmentation quality after the semi-supervised stage.
+| Model              | Dataset | Dice Score | IoU Score  | Boundary F1 |
+| ------------------ | ------- | :--------: | :--------: | :---------: |
+| **CTO-Net**        | Human   | **95.76%** | **91.88%** | **72.16%**  |
+| (Res2Net-50)       | Rat     |  91.07%    |  83.64%    |   75.78%    |
+| **CTO Stitch-ViT** | Human   |  92.43%    |  86.09%    |   59.52%    |
+| (Experimental)     | Rat     | **91.99%** | **85.38%** | **85.14%**  |
+*Table 1: Quantitative comparison of final models on validation sets.*
 
-**Prediction Comparison:**
-![Baseline Predictions](logs/Human/cto/baseline_predictions.png)
-![Final Predictions](logs/Human/cto/final_predictions.png)
-*Figure 3: Predictions from the Stage 1 baseline model (top) vs. the Stage 2 final model (bottom). The final model produces significantly cleaner and more coherent segmentations.*
+**Analysis of Quantitative Results:**
+*   **Semi-Supervised Uplift:** In all experiments, the Stage 2 models demonstrated a consistent and significant performance improvement over their Stage 1 baselines, validating the effectiveness of the Mean Teacher approach for leveraging unlabeled data.
+*   **CTO-Net on Human Dataset:** The standard `CTO-Net` shows outstanding performance on the Human dataset, outperforming the experimental Stitch-ViT model across all key metrics. This suggests its architecture is highly effective for the vessel structures in this dataset.
+*   **Stitch-ViT on Rat Dataset:** The results reinforce our initial hypothesis. The `CTO Stitch-ViT` model shows a notable performance gain on the Rat dataset, especially in Boundary F1 score (85.14% vs 75.78%). This suggests its ability to capture global context is particularly advantageous for the more complex and variable vessel structures found in that data.
 
-**Analysis:** The baseline model, trained only on labeled data, correctly identifies major vessel structures but produces noisy, disconnected predictions. The final model, refined with unlabeled data, generates smooth, confident, and structurally complete masks. This demonstrates that the model successfully learned the underlying anatomical structure from the unlabeled video frames.
+#### **6.3. Visual Analysis**
+Visual inspection confirms the quantitative results. The final models (Stage 2) produce significantly cleaner and more coherent segmentations compared to their noisy Stage 1 counterparts.
+
+**CTO-Net vs. CTO Stitch-ViT on Rat Dataset:**
+!Rat Prediction Comparison
+*Figure 2: Prediction comparison on the Rat dataset. Left: Ground Truth, Middle: CTO-Net, Right: CTO Stitch-ViT. The Stitch-ViT model captures finer boundary details, aligning with its higher Boundary F1 score.*
+
+**CTO-Net on Human Dataset:**
+!Human Prediction Comparison
+*Figure 3: Prediction comparison on the Human dataset. The standard CTO-Net provides clean and accurate masks, outperforming the experimental model.*
+
+**Visual Summary:**
+- **Baseline vs. Final:** The consistency loss from the Mean Teacher method effectively acts as a regularizer, reducing noise and filling in gaps in the vessel structures for all final models. The improvement from Stage 1 to Stage 2 is visually dramatic.
+- **Model Comparison:** On the Rat dataset, the predictions from `CTO Stitch-ViT` appear more confident and capture finer details along the vessel boundaries. On the Human dataset, `CTO-Net` provides clean and accurate masks that are superior to the Stitch-ViT variant.
 
 ---
 
@@ -166,8 +185,9 @@ Visual comparison reveals a dramatic improvement in segmentation quality after t
 
 #### **7.2. Limitations and Future Work**
 1.  **Experimental Stitch-ViT:** The `cto_stitchvit` model is a preliminary exploration. More rigorous hyperparameter tuning and architectural adjustments are needed to determine if the added complexity of the transformer blocks provides a tangible benefit. Future work could explore more advanced ViT integrations.
-2.  **Dependence on Pseudo-Labels:** The SSL stage relies on high-quality pseudo-labels from the teacher. If the initial baseline model is very poor, or if there is a large domain gap between labeled and unlabeled sets, the SSL training could be unstable. Future work could incorporate techniques to filter or weight pseudo-labels based on confidence.
-3.  **Computational Cost:** The two-stage process is computationally intensive. Research into more efficient SSL methods or model distillation could reduce training time.
+2.  **Dataset-Specific Performance:** As noted, the benefits of `cto_stitchvit` appear to be dataset-dependent. Its advantages for the Rat dataset are clear, but it doesn't outperform the standard CTO-Net on the Human dataset, suggesting there is no one-size-fits-all solution.
+3.  **Dependence on Pseudo-Labels:** The SSL stage relies on high-quality pseudo-labels from the teacher. If the initial baseline model is very poor, or if there is a large domain gap between labeled and unlabeled sets, the SSL training could be unstable. Future work could incorporate techniques to filter or weight pseudo-labels based on confidence.
+4.  **Computational Cost:** The two-stage process is computationally intensive. Research into more efficient SSL methods or model distillation could reduce training time.
 
 ---
 
@@ -202,7 +222,11 @@ This project successfully developed and validated a semi-supervised pipeline for
     # Run the full pipeline for the default CTO-Net
     python -m src.main all --visualize
     ```
-4.  **Launch GUI:**
+4.  **Generate Evaluation Table:**
+    ```bash
+    python -m src.main visualize_eval --log-dir <path_to_log_directory>
+    ```
+5.  **Launch GUI:**
     ```bash
     python app.py
     ```

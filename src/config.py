@@ -8,8 +8,7 @@ from typing import Tuple, Optional, Dict, Any, List
 class PathsConfig:
     labeled_dir: str = "data/annotated"
     labeled_masks_dir: str = "data/masks"
-    unlabeled_dir: str = "data/video"
-    pseudo_dir: str = "data/pseudo_labels"
+    unlabeled_dir: str = "data/frames"
     model_dir: str = "models"
     log_dir: str = "logs"
     checkpoint_dir: Optional[str] = None
@@ -81,7 +80,7 @@ class ExperimentConfig:
         raw_paths = d.get("paths", {})
         # Filter unknown keys to avoid TypeError when config.json has extras
         allowed_path_keys = {
-            "labeled_dir", "unlabeled_dir", "pseudo_dir",
+            "labeled_dir", "unlabeled_dir",
             "model_dir", "log_dir", "checkpoint_dir", "scripts_dir", "labeled_masks_dir"
         }
         filtered_paths = {k: v for k, v in raw_paths.items() if k in allowed_path_keys}
@@ -116,7 +115,6 @@ class ExperimentConfig:
         paths.labeled_dir = os.path.join(paths.labeled_dir, exp_type)
         paths.labeled_masks_dir = os.path.join(paths.labeled_masks_dir, exp_type)
         paths.unlabeled_dir = os.path.join(paths.unlabeled_dir, exp_type)
-        paths.pseudo_dir = os.path.join(paths.pseudo_dir, exp_type)
         paths.model_dir = os.path.join(paths.model_dir, exp_type)
         paths.log_dir = os.path.join(paths.log_dir, exp_type)
 

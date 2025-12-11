@@ -4,7 +4,6 @@ from typing import Optional, Dict, Callable
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from tqdm import tqdm
 
@@ -154,19 +153,17 @@ class Trainer:
                     final_output = outputs
 
                 # During validation, we only care about the loss on the main output.
-                # Use the inner criterion to avoid applying deep supervision weights.
-                if isinstance(self.criterion, DeepSupervisionLoss):
-                    loss = self.criterion.criterion(final_output, masks.float())
-                else:
-                    loss = self.criterion(final_output, masks.float())
+                # The criterion (even if DeepSupervisionLoss) handles single tensor input correctly.
+                loss = self.criterion(final_output, masks.float())
 
                 total_loss += loss.item()
                 
                 # Collect predictions and targets for metrics
                 probs = torch.sigmoid(final_output)
                 preds = (probs > 0.5).float()
-                all_preds.append(preds)
-                all_targets.append(masks)
+                # Move to CPU to avoid GPU OOM during validation
+                all_preds.append(preds.cpu())
+                all_targets.append(masks.cpu())
                 
         num_batches = len(val_loader)
         if num_batches == 0:
@@ -257,9 +254,8 @@ class Trainer:
             # Save best model
             if val_loss < self._best_val_loss - 1e-6:
                 self._best_val_loss = val_loss
-                self._best_model_state = copy.deepcopy(
-                    self.model.state_dict()
-                )
+                # Save state dict to CPU to save GPU memory
+                self._best_model_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
                 self._epochs_since_improve = 0
             else:
                 self._epochs_since_improve += 1
@@ -362,16 +358,9 @@ def train_kfold(
         
         # Train model
         model = model_factory()
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=config.learning_rate,
-            weight_decay=config.weight_decay
-        )
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, 'min', patience=5, factor=0.1
-        )
         trainer = Trainer(model, model_config, config, logger)
-        model = trainer.train(train_loader, val_loader, optimizer, scheduler)
+        # Let trainer create optimizer/scheduler to ensure model is on correct device first
+        model = trainer.train(train_loader, val_loader)
         
         # Update best model
         if trainer._best_val_loss < best_val_loss:

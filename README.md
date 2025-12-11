@@ -4,6 +4,8 @@ This project enhances and extends a foundational supervised learning pipeline by
 
 **Presentation Video:** [Link to your 30-minute presentation video will be here]
 
+**Project Resources (Dataset, Models, Results):** [Google Drive Link](https://drive.google.com/drive/folders/1ORzUm1P5PK35O_L4YQ2L_IgIZZbkXi-0)
+
 ## Table of Contents
 - [Project Background](#project-background)
 - [Project Team and Task Division](#project-team-and-task-division)
@@ -44,6 +46,7 @@ We extend this work by integrating a semi-supervised learning paradigm to reduce
 *   **Primary Architecture (CTO-Net):** A high-performance segmentation model with a **Res2Net-50** backbone designed for detailed feature extraction.
 *   **Semi-Supervised Learning:** Leverages unlabeled video data via the **Mean Teacher** method to improve accuracy and reduce annotation effort.
 *   **Boundary-Aware Loss:** Combines Dice Loss and Boundary Loss for sharp and accurate detection of vessel edges.
+*   **Deep Supervision:** Utilizes auxiliary heads at different decoder scales to improve gradient flow and feature learning during training.
 *   **2-Stage Training Pipeline:**
     1.  **Stage 1:** Train a baseline model on a small set of labeled data.
     2.  **Stage 2:** Refine the model using Mean Teacher with both labeled and a large amount of unlabeled data.
@@ -169,6 +172,10 @@ Useful scripts are located in `tools/scripts/`.
     ```bash
     python -m tools.scripts.visualize_predictions --log-dir <path_to_log_directory>
     ```
+*   **Generate Evaluation Table:**
+    ```bash
+    python -m src.main visualize_eval --log-dir <path_to_log_directory>
+    ```
 
 ## GUI Application
 The project includes a graphical user interface for interactive prediction and analysis.
@@ -181,33 +188,60 @@ python app.py
 
 The model's performance was evaluated using Dice Score, Intersection over Union (IoU), Precision, and Recall. The training process involves two stages: baseline training on labeled data and semi-supervised refinement using the Mean Teacher method.
 
+### Quantitative Comparison
+
+To provide a clear comparison, the table below summarizes the performance of both **CTO-Net** and the experimental **CTO Stitch-ViT** across both the Human and Rat datasets. Metrics are reported for Stage 2 (final model after semi-supervised learning).
+
+| Model              | Dataset | Dice Score | IoU Score  | Boundary F1 |
+| ------------------ | ------- | :--------: | :--------: | :---------: |
+| **CTO-Net**        | Human   | **95.76%** | **91.88%** | **72.16%**  |
+| (Res2Net-50)       | Rat     |  91.07%    |  83.64%    |   75.78%    |
+| **CTO Stitch-ViT** | Human   |  92.43%    |  86.09%    |   59.52%    |
+| (Experimental)     | Rat     | **91.99%** | **85.38%** | **85.14%**  |
+
+
+**Analysis of Quantitative Results:**
+*   **Semi-Supervised Uplift:** Across the board, the Stage 2 results (not shown in this summary table but visible in logs) demonstrate a consistent improvement over Stage 1, validating the effectiveness of the Mean Teacher approach.
+*   **CTO-Net on Human Dataset:** The standard `CTO-Net` shows outstanding performance on the Human dataset, outperforming the experimental Stitch-ViT model across all key metrics. This suggests its architecture is highly effective for the vessel structures in this dataset.
+*   **Stitch-ViT on Rat Dataset:** The results reinforce our initial hypothesis. The `CTO Stitch-ViT` model shows a notable performance gain on the Rat dataset, especially in Boundary F1 score. This suggests its ability to capture global context is particularly advantageous for the more complex and variable vessel structures found in that data.
+
 ### Training Curves
-The training curves below show the progression of the Dice score and loss for both the baseline (Stage 1) and final (Stage 2) models on the Human dataset. We can observe that the metrics stabilize, indicating successful convergence.
+The training curves show the progression of the Dice score and loss, indicating successful convergence for all models. The Stage 2 curves demonstrate further stabilization as the models learn from thousands of unlabeled frames.
 
-*(Note: These are example images from the project's output logs.)*
+#### CTO-Net (Vanilla)
+**Human Dataset:**
+!CTO-Net Human Curves
 
-**Stage 1 - Baseline Training Curves (`cto` model):**
-![Baseline Curves](logs/Human/cto/Human_20251122_234019_detailed_curves.png)
+**Rat Dataset:**
+!CTO-Net Rat Curves
 
-**Stage 2 - Final Model Training Curves (`cto` model):**
-![Final Curves](logs/Human/cto/Human_20251123_000145_detailed_curves.png)
+#### CTO Stitch-ViT (Experimental)
+**Human Dataset:**
+!Stitch-ViT Human Curves
 
-**Analysis:**
-- The Stage 1 curves show the model rapidly learning from the 33 labeled images.
-- The Stage 2 curves demonstrate further stabilization and slight improvements as the model learns from thousands of unlabeled frames, guided by the Mean Teacher. This highlights the effectiveness of the semi-supervised approach.
+**Rat Dataset:**
+!Stitch-ViT Rat Curves
 
 ### Prediction Quality
 Visual inspection shows a significant improvement from the baseline model to the final model. The final model produces much cleaner segmentations with fewer false positives.
 
-**Baseline Model Predictions (Stage 1):**
-![Baseline Predictions](logs/Human/cto/baseline_predictions.png)
+#### CTO-Net (Vanilla)
+**Human Dataset:**
+!CTO-Net Human Predictions
 
-**Final Model Predictions (Stage 2):**
-![Final Predictions](logs/Human/cto/final_predictions.png)
+**Rat Dataset:**
+!CTO-Net Rat Predictions
 
-**Analysis:**
-- The baseline model correctly identifies the main vessel structures but suffers from noise and disconnected artifacts.
-- The final model, after Mean Teacher training, produces significantly smoother and more coherent vessel segmentations. The consistency loss used in Stage 2 helps the model learn the underlying structure of the vessels, resulting in more robust predictions.
+#### CTO Stitch-ViT (Experimental)
+**Human Dataset:**
+!Stitch-ViT Human Predictions
+
+**Rat Dataset:**
+!Stitch-ViT Rat Predictions
+
+**Visual Analysis:**
+- **Baseline vs. Final:** In all cases, the final Stage 2 models produce significantly smoother and more coherent segmentations compared to their Stage 1 baselines. The consistency loss from the Mean Teacher method effectively reduces noise and fills in gaps.
+- **Model Comparison:** On the Rat dataset, the predictions from `CTO Stitch-ViT` appear more confident and capture finer details along the vessel boundaries, aligning with its higher Boundary F1 score. On the Human dataset, `CTO-Net` provides clean and accurate masks.
 
 ## Project Analysis: Successes and Limitations
 
@@ -218,8 +252,9 @@ Visual inspection shows a significant improvement from the baseline model to the
 
 ### Limitations
 1.  **Experimental Stitch-ViT:** The `cto_stitchvit` model is still experimental. While it shows promise in capturing global context, it requires more extensive tuning and evaluation to definitively prove its benefits over the standard CTO-Net.
-2.  **Dependence on Pseudo-Labels:** The performance of the semi-supervised stage is highly dependent on the quality of the pseudo-labels generated by the teacher model. In cases of significant domain shift between labeled and unlabeled data, this could potentially degrade performance.
-3.  **Computational Cost:** The two-stage training process, especially with a large number of unlabeled frames, is computationally intensive and time-consuming.
+2.  **Dataset-Specific Performance of Stitch-ViT:** As noted in the results, the benefits of `cto_stitchvit` appear to be dataset-dependent. Its advantages for the Rat dataset are clear, but it doesn't necessarily outperform the standard CTO-Net on the Human dataset, suggesting there is no one-size-fits-all solution.
+3.  **Dependence on Pseudo-Labels:** The performance of the semi-supervised stage is highly dependent on the quality of the pseudo-labels generated by the teacher model. In cases of significant domain shift between labeled and unlabeled data, this could degrade performance.
+4.  **Computational Cost:** The two-stage training process, especially with a large number of unlabeled frames, is computationally intensive and time-consuming.
 
 ## Key Learnings
 

@@ -13,7 +13,6 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage, QFont
-import matplotlib.pyplot as plt
 import cv2
 # Use absolute imports for clarity and stability
 from src.models.cto.CTO_net import CTO
@@ -116,8 +115,19 @@ class VideoSegmentationApp(QMainWindow):
             model = CTO(seg_classes=1)
             
             # Load the state dictionary
-            state_dict = torch.load(path, map_location=device)
-            model.load_state_dict(state_dict)
+            ckpt = torch.load(path, map_location=device)
+            
+            # Handle dictionary checkpoint format (from model_factory.save_checkpoint)
+            if isinstance(ckpt, dict) and 'state_dict' in ckpt:
+                state_dict = ckpt['state_dict']
+            else:
+                state_dict = ckpt
+                
+            # Handle DataParallel prefix if present (remove 'module.' prefix)
+            if isinstance(state_dict, dict) and any(k.startswith('module.') for k in state_dict.keys()):
+                state_dict = {k[7:]: v for k, v in state_dict.items()}
+            
+            model.load_state_dict(state_dict, strict=False)
             
             model.name = os.path.splitext(os.path.basename(path))[0]
         except Exception as e:
@@ -613,6 +623,10 @@ class VideoSegmentationApp(QMainWindow):
         
         with torch.no_grad():
             output = self.model(img_tensor)
+            
+        # Handle tuple output from CTO models (deep supervision)
+        if isinstance(output, (tuple, list)):
+            output = output[0]
             
         mask = torch.sigmoid(output).squeeze().cpu().numpy()
         mask = (mask > 0.5).astype(np.uint8) * 255

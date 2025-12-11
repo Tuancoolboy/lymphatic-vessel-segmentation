@@ -1,7 +1,15 @@
+# Data files
+data/
+*.avi
 *.mp4
+*.pth
+*.jpg
+*.png
+*.jpeg
+*.jfif
 
 # Model checkpoints (quá lớn, không nên push lên GitHub)
-models/*.pth
+*.pth
 
 # Logs
 logs/
@@ -29,7 +37,3 @@ ENV/
 *.swp
 *.swo
 *~
-
-# Custom
-reference/
-data/

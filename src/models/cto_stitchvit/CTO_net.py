@@ -5,8 +5,6 @@ import torch.nn.functional as F
 
 from .Res2Net import res2net50_v1b_26w_4s
 import numpy as np
-import math
-from ..cto.transformer_block import FeedForward2D
 class ConvBNR(nn.Module):
     def __init__(self, inplanes, planes, kernel_size=3, stride=1, dilation=1, bias=False):
         super(ConvBNR, self).__init__()
@@ -43,7 +41,6 @@ class BasicConv2d(nn.Module):
                               kernel_size=kernel_size, stride=stride,
                               padding=padding, dilation=dilation, bias=False)
         self.bn = nn.BatchNorm2d(out_planes)
-        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.conv(x)
@@ -242,119 +239,6 @@ class EAM(nn.Module):
         out = self.block(out)
 
         return out
-
-def attention(query, key, value):
-    scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(
-        query.size(-1)
-    )
-    p_attn = F.softmax(scores, dim=-1)
-    p_val = torch.matmul(p_attn, value)
-    return p_val, p_attn
-
-
-class MultiHeadedAttention(nn.Module):
-    """
-    Take in model size and number of heads.
-    """
-
-    def __init__(self, patchsize, d_model):
-        super().__init__()
-        self.patchsize = patchsize
-        self.query_embedding = nn.Conv2d(
-            d_model, d_model, kernel_size=1, padding=0
-        )
-        self.value_embedding = nn.Conv2d(
-            d_model, d_model, kernel_size=1, padding=0
-        )
-        self.key_embedding = nn.Conv2d(
-            d_model, d_model, kernel_size=1, padding=0
-        )
-        self.output_linear = nn.Sequential(
-            nn.Conv2d(d_model, d_model, kernel_size=3, padding=1),
-            nn.BatchNorm2d(d_model),
-            nn.LeakyReLU(0.2, inplace=True),
-        )
-
-    def forward(self, x):
-        b, c, h, w = x.size()
-        d_k = c // len(self.patchsize)
-        output = []
-        _query = self.query_embedding(x)
-        _key = self.key_embedding(x)
-        _value = self.value_embedding(x)
-        for (width, height), query, key, value in zip(
-            self.patchsize,
-            torch.chunk(_query, len(self.patchsize), dim=1),
-            torch.chunk(_key, len(self.patchsize), dim=1),
-            torch.chunk(_value, len(self.patchsize), dim=1),
-        ):
-            out_w, out_h = w // width, h // height
-            ## 1) embedding and reshape
-            query = query.view(b, d_k, out_h, height, out_w, width)
-            query = (
-                query.permute(0, 2, 4, 1, 3, 5)
-                .contiguous()
-                .view(b, out_h * out_w, d_k * height * width)
-            )
-            key = key.view(b, d_k, out_h, height, out_w, width)
-            key = (
-                key.permute(0, 2, 4, 1, 3, 5)
-                .contiguous()
-                .view(b, out_h * out_w, d_k * height * width)
-            )
-            value = value.view(b, d_k, out_h, height, out_w, width)
-            value = (
-                value.permute(0, 2, 4, 1, 3, 5)
-                .contiguous()
-                .view(b, out_h * out_w, d_k * height * width)
-            )
-            y, _ = attention(query, key, value)
-
-            # 3) "Concat" using a view and apply a final linear.
-            y = y.view(b, out_h, out_w, d_k, height, width)
-            y = y.permute(0, 3, 1, 4, 2, 5).contiguous().view(b, d_k, h, w)
-            output.append(y)
-
-        output = torch.cat(output, 1)
-        self_attention = self.output_linear(output)
-
-        return self_attention
-
-
-class TransformerBlock(nn.Module):
-    """
-    Transformer = MultiHead_Attention + Feed_Forward with sublayer connection
-    """
-
-    def __init__(self, patchsize, in_channel=256):
-        super().__init__()
-        self.attention = MultiHeadedAttention(patchsize, d_model=in_channel)
-        self.feed_forward = FeedForward2D(
-            in_channel=in_channel, out_channel=in_channel
-        )
-
-    def forward(self, rgb):
-        self_attention = self.attention(rgb)
-        output = rgb + self_attention
-        output = output + self.feed_forward(output)
-        return output
-
-class PatchTrans(nn.Module):
-    def __init__(self, in_channel):
-        super().__init__()
-        patchsize = [
-              (32,32),
-              (16,16),
-              (8,8),
-              (4,4),
-        ]
-
-        self.t = TransformerBlock(patchsize, in_channel=in_channel)
-
-    def forward(self, enc_feat):
-        output = self.t(enc_feat)
-        return output
-
 
 from .vit import ViT
 class CTO(nn.Module):

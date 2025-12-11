@@ -4,6 +4,8 @@ Dự án này cải tiến và mở rộng một quy trình học có giám sát
 
 **Video Thuyết Trình:** [Link đến video thuyết trình 30 phút của bạn sẽ ở đây]
 
+**Tài Nguyên Dự Án (Dataset, Models, Kết Quả):** [Google Drive Link](https://drive.google.com/drive/folders/1ORzUm1P5PK35O_L4YQ2L_IgIZZbkXi-0)
+
 ## Mục Lục
 - [Bối Cảnh Dự Án](#bối-cảnh-dự-án)
 - [Nhóm Dự Án và Phân Công Nhiệm Vụ](#nhóm-dự-án-và-phân-công-nhiệm-vụ)
@@ -44,6 +46,7 @@ Chúng tôi mở rộng công trình này bằng cách tích hợp một mô hì
 *   **Kiến trúc chính (CTO-Net):** Một mô hình phân vùng hiệu suất cao với backbone **Res2Net-50** được thiết kế để trích xuất đặc trưng chi tiết.
 *   **Học Bán Giám Sát (Semi-Supervised Learning):** Tận dụng dữ liệu video không nhãn thông qua phương pháp **Mean Teacher** để cải thiện độ chính xác và giảm công sức gán nhãn.
 *   **Hàm Loss Nhận Diện Biên (Boundary-Aware Loss):** Kết hợp Dice Loss và Boundary Loss để phát hiện các cạnh của mạch máu một cách sắc nét và chính xác.
+*   **Deep Supervision:** Sử dụng các đầu ra phụ trợ (auxiliary heads) ở các tỷ lệ khác nhau để cải thiện luồng gradient và khả năng học đặc trưng.
 *   **Quy Trình Huấn Luyện 2 Giai Đoạn:**
     1.  **Giai đoạn 1:** Huấn luyện một mô hình cơ sở (baseline) trên một tập dữ liệu nhỏ có nhãn.
     2.  **Giai đoạn 2:** Tinh chỉnh mô hình bằng phương pháp Mean Teacher với cả dữ liệu có nhãn và một lượng lớn dữ liệu không nhãn.
@@ -169,6 +172,10 @@ Các script hữu ích được đặt trong `tools/scripts/`.
     ```bash
     python -m tools.scripts.visualize_predictions --log-dir <path_to_log_directory>
     ```
+*   **Tạo Bảng Đánh Giá:**
+    ```bash
+    python -m src.main visualize_eval --log-dir <path_to_log_directory>
+    ```
 
 ## Ứng Dụng Giao Diện Đồ Họa (GUI)
 Dự án bao gồm một giao diện đồ họa người dùng để dự đoán và phân tích một cách tương tác.
@@ -181,33 +188,59 @@ python app.py
 
 Hiệu suất của mô hình được đánh giá bằng các chỉ số Dice Score, Intersection over Union (IoU), Precision và Recall. Quá trình huấn luyện bao gồm hai giai đoạn: huấn luyện cơ sở trên dữ liệu có nhãn và tinh chỉnh bán giám sát bằng phương pháp Mean Teacher.
 
+### So Sánh Định Lượng
+
+Để cung cấp một sự so sánh rõ ràng, bảng dưới đây tóm tắt hiệu suất của cả **CTO-Net** và mô hình thử nghiệm **CTO Stitch-ViT** trên cả hai bộ dữ liệu Người và Chuột. Các chỉ số được báo cáo cho Giai đoạn 2 (mô hình cuối cùng sau khi học bán giám sát).
+
+| Model              | Dataset | Dice Score | IoU Score  | Boundary F1 |
+| ------------------ | ------- | :--------: | :--------: | :---------: |
+| **CTO-Net**        | Người   | **95.76%** | **91.88%** | **72.16%**  |
+| (Res2Net-50)       | Chuột   |  91.07%    |  83.64%    |   75.78%    |
+| **CTO Stitch-ViT** | Người   |  92.43%    |  86.09%    |   59.52%    |
+| (Thử nghiệm)       | Chuột   | **91.99%** | **85.38%** | **85.14%**  |
+
+**Phân tích kết quả định lượng:**
+*   **Sự cải thiện từ học bán giám sát:** Nhìn chung, kết quả Giai đoạn 2 (không hiển thị trong bảng tóm tắt này nhưng có trong log) cho thấy sự cải thiện nhất quán so với Giai đoạn 1, xác thực hiệu quả của phương pháp Mean Teacher.
+*   **CTO-Net trên bộ dữ liệu Người:** `CTO-Net` tiêu chuẩn cho thấy hiệu suất vượt trội trên bộ dữ liệu Người, vượt qua mô hình Stitch-ViT thử nghiệm trên tất cả các chỉ số chính. Điều này cho thấy kiến trúc của nó rất hiệu quả đối với cấu trúc mạch trong bộ dữ liệu này.
+*   **Stitch-ViT trên bộ dữ liệu Chuột:** Kết quả củng cố giả thuyết ban đầu của chúng tôi. Mô hình `CTO Stitch-ViT` cho thấy sự gia tăng hiệu suất đáng chú ý trên bộ dữ liệu Chuột, đặc biệt là ở điểm Boundary F1. Điều này cho thấy khả năng nắm bắt ngữ cảnh toàn cục của nó đặc biệt thuận lợi cho các cấu trúc mạch phức tạp và đa dạng hơn có trong dữ liệu đó.
+
 ### Biểu Đồ Huấn Luyện
-Các biểu đồ huấn luyện dưới đây cho thấy sự tiến triển của điểm Dice và loss cho cả mô hình cơ sở (Giai đoạn 1) và mô hình cuối cùng (Giai đoạn 2) trên bộ dữ liệu Người. Chúng ta có thể quan sát thấy các chỉ số ổn định, cho thấy sự hội tụ thành công.
+Các biểu đồ huấn luyện cho thấy sự tiến triển của điểm Dice và loss, cho thấy sự hội tụ thành công cho tất cả các mô hình. Các đường cong Giai đoạn 2 thể hiện sự ổn định hơn nữa khi các mô hình học hỏi từ hàng nghìn khung hình không được gán nhãn.
 
-*(Lưu ý: Đây là những hình ảnh ví dụ từ log đầu ra của dự án.)*
+#### CTO-Net (Vanilla)
+**Bộ dữ liệu Người:**
+!CTO-Net Human Curves
 
-**Giai đoạn 1 - Biểu đồ huấn luyện mô hình cơ sở (`cto`):**
-!Baseline Curves
+**Bộ dữ liệu Chuột:**
+!CTO-Net Rat Curves
 
-**Giai đoạn 2 - Biểu đồ huấn luyện mô hình cuối cùng (`cto`):**
-!Final Curves
+#### CTO Stitch-ViT (Thử nghiệm)
+**Bộ dữ liệu Người:**
+!Stitch-ViT Human Curves
 
-**Phân tích:**
-- Các biểu đồ Giai đoạn 1 cho thấy mô hình học nhanh chóng từ 33 ảnh có nhãn.
-- Các biểu đồ Giai đoạn 2 cho thấy sự ổn định hơn và cải thiện nhẹ khi mô hình học từ hàng nghìn khung hình không nhãn, được dẫn dắt bởi Mean Teacher. Điều này làm nổi bật hiệu quả của phương pháp bán giám sát.
+**Bộ dữ liệu Chuột:**
+!Stitch-ViT Rat Curves
 
 ### Chất Lượng Dự Đoán
 Kiểm tra trực quan cho thấy sự cải thiện đáng kể từ mô hình cơ sở đến mô hình cuối cùng. Mô hình cuối cùng tạo ra các phân vùng sạch hơn nhiều với ít dương tính giả (false positives) hơn.
 
-**Dự đoán của mô hình cơ sở (Giai đoạn 1):**
-!Baseline Predictions
+#### CTO-Net (Vanilla)
+**Bộ dữ liệu Người:**
+!CTO-Net Human Predictions
 
-**Dự đoán của mô hình cuối cùng (Giai đoạn 2):**
-!Final Predictions
+**Bộ dữ liệu Chuột:**
+!CTO-Net Rat Predictions
 
-**Phân tích:**
-- Mô hình cơ sở xác định chính xác các cấu trúc mạch chính nhưng bị nhiễu và các vùng bị đứt gãy.
-- Mô hình cuối cùng, sau khi huấn luyện với Mean Teacher, tạo ra các phân vùng mạch máu mượt mà và liền mạch hơn đáng kể. Consistency loss được sử dụng trong Giai đoạn 2 giúp mô hình học được cấu trúc cơ bản của các mạch máu, dẫn đến các dự đoán mạnh mẽ hơn.
+#### CTO Stitch-ViT (Thử nghiệm)
+**Bộ dữ liệu Người:**
+!Stitch-ViT Human Predictions
+
+**Bộ dữ liệu Chuột:**
+!Stitch-ViT Rat Predictions
+
+**Phân tích trực quan:**
+- **Cơ sở vs. Cuối cùng:** Trong mọi trường hợp, các mô hình Giai đoạn 2 cuối cùng tạo ra các phân vùng mượt mà và mạch lạc hơn đáng kể so với các mô hình cơ sở Giai đoạn 1 của chúng. Consistency loss từ phương pháp Mean Teacher giúp giảm nhiễu và lấp đầy các khoảng trống một cách hiệu quả.
+- **So sánh mô hình:** Trên bộ dữ liệu Chuột, các dự đoán từ `CTO Stitch-ViT` có vẻ tự tin hơn và nắm bắt được các chi tiết tốt hơn dọc theo ranh giới mạch máu, phù hợp với điểm Boundary F1 cao hơn của nó. Trên bộ dữ liệu Người, `CTO-Net` cung cấp các mặt nạ sạch và chính xác.
 
 ## Phân Tích Dự Án: Thành Công và Hạn Chế
 
@@ -218,8 +251,9 @@ Kiểm tra trực quan cho thấy sự cải thiện đáng kể từ mô hình 
 
 ### Hạn Chế
 1.  **Mô hình Stitch-ViT còn trong giai đoạn thử nghiệm:** Mô hình `cto_stitchvit` vẫn đang trong giai đoạn thử nghiệm. Mặc dù nó cho thấy tiềm năng trong việc nắm bắt ngữ cảnh toàn cục, nó đòi hỏi phải tinh chỉnh và đánh giá sâu hơn để chứng minh một cách chắc chắn lợi ích của nó so với CTO-Net tiêu chuẩn.
-2.  **Phụ thuộc vào Nhãn Giả (Pseudo-Labels):** Hiệu suất của giai đoạn bán giám sát phụ thuộc nhiều vào chất lượng của các nhãn giả được tạo ra bởi teacher model. Trong trường hợp có sự khác biệt lớn (domain shift) giữa dữ liệu có nhãn và không nhãn, điều này có thể làm giảm hiệu suất.
-3.  **Chi Phí Tính Toán:** Quá trình huấn luyện hai giai đoạn, đặc biệt với số lượng lớn khung hình không nhãn, đòi hỏi nhiều tài nguyên tính toán và tốn thời gian.
+2.  **Hiệu suất phụ thuộc vào bộ dữ liệu của Stitch-ViT:** Như đã lưu ý trong kết quả, lợi ích của `cto_stitchvit` dường như phụ thuộc vào bộ dữ liệu. Ưu điểm của nó đối với bộ dữ liệu Chuột là rõ ràng, nhưng nó không nhất thiết vượt trội hơn CTO-Net tiêu chuẩn trên bộ dữ liệu Người, cho thấy không có giải pháp nào phù hợp cho tất cả.
+3.  **Phụ thuộc vào Nhãn Giả (Pseudo-Labels):** Hiệu suất của giai đoạn bán giám sát phụ thuộc nhiều vào chất lượng của các nhãn giả được tạo ra bởi teacher model. Trong trường hợp có sự khác biệt lớn (domain shift) giữa dữ liệu có nhãn và không nhãn, điều này có thể làm giảm hiệu suất.
+4.  **Chi Phí Tính Toán:** Quá trình huấn luyện hai giai đoạn, đặc biệt với số lượng lớn khung hình không nhãn, đòi hỏi nhiều tài nguyên tính toán và tốn thời gian.
 
 ## Những Gì Đã Học Được
 

@@ -3,11 +3,10 @@ import math
 import torch.utils.model_zoo as model_zoo
 import torch
 
-__all__ = ['Res2Net', 'res2net50_v1b_26w_4s', 'res2net101_v1b_26w_4s']
+__all__ = ['Res2Net', 'res2net50_v1b_26w_4s']
 
 resnet_model_urls = {
     'res2net50_v1b_26w_4s': 'https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net50_v1b_26w_4s-3cf99910.pth',
-    'res2net101_v1b_26w_4s': 'https://shanghuagao.oss-cn-beijing.aliyuncs.com/res2net/res2net101_v1b_26w_4s-0812c246.pth',
 }
 
 class Bottle2neck(nn.Module):
@@ -162,17 +161,5 @@ def res2net50_v1b_26w_4s(pretrained=False, **kwargs):
     model = Res2Net(Bottle2neck, [3, 4, 6, 3], baseWidth=26, scale=4, **kwargs)
     if pretrained:
         state_dict = model_zoo.load_url(resnet_model_urls['res2net50_v1b_26w_4s'], map_location='cpu')
-        model.load_state_dict(state_dict, strict=False)
-    return model
-
-
-def res2net101_v1b_26w_4s(pretrained=False, **kwargs):
-    """Constructs a Res2Net-50_v1b_26w_4s lib.
-    Args:
-        pretrained (bool): If True, returns a lib pre-trained on ImageNet
-    """
-    model = Res2Net(Bottle2neck, [3, 4, 23, 3], baseWidth=26, scale=4, **kwargs)
-    if pretrained:
-        state_dict = model_zoo.load_url(resnet_model_urls['res2net101_v1b_26w_4s'], map_location='cpu')
         model.load_state_dict(state_dict, strict=False)
     return model

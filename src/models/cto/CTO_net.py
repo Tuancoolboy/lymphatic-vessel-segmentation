@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from .Res2Net import res2net50_v1b_26w_4s
 import numpy as np
 import math
-from .transformer_block import FeedForward2D
 class ConvBNR(nn.Module):
     def __init__(self, inplanes, planes, kernel_size=3, stride=1, dilation=1, bias=False):
         super(ConvBNR, self).__init__()
@@ -43,7 +42,6 @@ class BasicConv2d(nn.Module):
                               kernel_size=kernel_size, stride=stride,
                               padding=padding, dilation=dilation, bias=False)
         self.bn = nn.BatchNorm2d(out_planes)
-        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         x = self.conv(x)
@@ -242,6 +240,24 @@ class EAM(nn.Module):
         out = self.block(out)
 
         return out
+
+class FeedForward2D(nn.Module):
+    def __init__(self, in_channel, out_channel):
+        super(FeedForward2D, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(
+                in_channel, out_channel, kernel_size=3, padding=2, dilation=2
+            ),
+            nn.BatchNorm2d(out_channel),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(out_channel, out_channel, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channel),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+    def forward(self, x):
+        x = self.conv(x)
+        return x
 
 def attention(query, key, value):
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(

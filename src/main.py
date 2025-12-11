@@ -23,7 +23,6 @@ Example usage:
 import os
 import json
 import argparse
-from pathlib import Path
 import platform
 from typing import Optional
 from copy import deepcopy
@@ -44,6 +43,11 @@ from src.utils.augment import (
     create_weak_transform
 )
 from src.visualization import visualize_predictions, visualize_evaluation_table
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 def load_config(config_path: str) -> ExperimentConfig:
     """
@@ -255,10 +259,10 @@ def log_system_info(logger, device):
         logger (TrainingLogger): The logger instance.
         device (str): The computation device ('cpu', 'cuda', 'mps').
     """
-    import psutil
     logger.log_message("--- System Information ---")
     logger.log_message(f"Operating System: {platform.system()} {platform.release()}")
-    logger.log_message(f"Memory: {psutil.virtual_memory().total / (1024**3):.2f} GB")
+    if psutil:
+        logger.log_message(f"Memory: {psutil.virtual_memory().total / (1024**3):.2f} GB")
 
     if device == "cuda" and torch.cuda.is_available():
         logger.log_message(f"Device: GPU ({torch.cuda.get_device_name(0)})")
@@ -266,7 +270,8 @@ def log_system_info(logger, device):
         logger.log_message("Device: Apple MPS")
     else:
         logger.log_message(f"Device: CPU ({platform.processor()})")
-        logger.log_message(f"CPU Cores: {psutil.cpu_count(logical=True)}")
+        if psutil:
+            logger.log_message(f"CPU Cores: {psutil.cpu_count(logical=True)}")
     logger.log_message("--------------------------")
 
 def run_visualize_eval(config: ExperimentConfig, specific_log_dir: Optional[str] = None):

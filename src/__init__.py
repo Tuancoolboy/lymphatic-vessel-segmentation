@@ -1,3 +1,3 @@
 """
-BCP Semi-supervised Vessel Segmentation package
+Semi-supervised Vessel Segmentation package
 """

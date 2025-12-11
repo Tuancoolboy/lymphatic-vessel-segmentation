@@ -7,7 +7,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 import pandas as pd
-import segmentation_models_pytorch as smp
 from tabulate import tabulate
 import cv2
 from scipy import ndimage

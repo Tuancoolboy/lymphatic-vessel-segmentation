@@ -1,8 +1,6 @@
 """
 Model architectures and builders.
 """
-import sys
-import os
 from typing import Optional, Dict, Any
 import torch
 import torch.nn as nn
@@ -69,12 +67,8 @@ def load_checkpoint(
     if isinstance(state_dict, dict) and any(k.startswith('module.') for k in state_dict.keys()):
         state_dict = {k[7:]: v for k, v in state_dict.items()}
 
-    # Filter out unnecessary keys from the loaded state_dict
-    model_state_dict = model.state_dict()
-    filtered_state_dict = {k: v for k, v in state_dict.items() if k in model_state_dict}
-
-    # Load the filtered state dict
-    model.load_state_dict(filtered_state_dict, strict=False)
+    # Load the state dict (strict=False ignores missing/unexpected keys automatically)
+    model.load_state_dict(state_dict, strict=False)
 
     model = model.to(device)
     return model

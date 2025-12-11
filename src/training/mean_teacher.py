@@ -6,16 +6,11 @@ loss is enforced between the student's and teacher's predictions on unlabeled da
 """
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Optional, Dict, Tuple
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 from ..utils.logging import TrainingLogger
-from src.utils.metrics import (
-    dice_coefficient, iou_score, pixel_accuracy, boundary_f1_score, avg_score
-)
-from src.training.losses import DeepSupervisionLoss
 from src.config import ModelConfig, TrainingConfig
 from src.training.trainer import Trainer
         

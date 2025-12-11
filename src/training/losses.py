@@ -133,12 +133,19 @@ class CombinedLoss(nn.Module):
 
     def forward(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         dice = self.dice_loss(predictions, targets)
-        boundary = self.boundary_loss(predictions, targets)
         bce = self.bce_loss(predictions, targets)
+        
+        # Optimization: Only compute boundary loss (expensive CPU op) if it contributes to the loss
+        boundary = torch.tensor(0.0, device=predictions.device)
+        
         if self.alpha_schedule == 'rebalance':
             # (1-β)*Dice + β*Boundary + 0.4*BCE ; β = (0.6 - alpha)
             beta = max(0.0, 0.6 - self.alpha)
+            if beta > 0:
+                boundary = self.boundary_loss(predictions, targets)
             combined = (1 - beta) * dice + beta * boundary + 0.4 * bce
         else:
+            if self.alpha > 0:
+                boundary = self.boundary_loss(predictions, targets)
             combined = dice + self.alpha * boundary + bce
         return combined
