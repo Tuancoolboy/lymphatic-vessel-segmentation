@@ -37,7 +37,7 @@ Dự án này là nỗ lực hợp tác giữa hai thành viên. Các nhiệm v�
  
 ## Bối Cảnh Dự Án
 
-Công trình này là sự tiếp nối trực tiếp của dự án **"Deep learning in Medical Researches: Lymphatic Vessel Segmentation"**. Dự án gốc đã thiết lập một quy trình học hoàn toàn có giám sát và giới thiệu các mô hình nền tảng như UNet++ cho bài toán này.
+Công trình này là sự tiếp nối trực tiếp của dự án **"Deep learning in Medical Researches: Lymphatic Vessel Segmentation"** ([Kho lưu trữ gốc](https://github.com/TUng1872004/Lymphatic-vessel)). Dự án gốc đã thiết lập một quy trình học hoàn toàn có giám sát và giới thiệu các mô hình nền tảng như UNet++ cho bài toán này.
 
 Chúng tôi mở rộng công trình này bằng cách tích hợp một mô hình học bán giám sát để giảm sự phụ thuộc vào dữ liệu được gán nhãn thủ công. Ứng dụng GUI tương tác (`app.py`) ban đầu được phát triển bởi **Vũ Hoàng Tùng** trong khuôn khổ dự án nền tảng, và chúng tôi đã điều chỉnh nó cho quy trình mới của mình. Chúng tôi xin gửi lời cảm ơn chân thành vì sự đóng góp quan trọng này.
 
@@ -178,7 +178,7 @@ Các script hữu ích được đặt trong `tools/scripts/`.
     ```
 
 ## Ứng Dụng Giao Diện Đồ Họa (GUI)
-Dự án bao gồm một giao diện đồ họa người dùng để dự đoán và phân tích một cách tương tác.
+Dự án bao gồm một giao diện đồ họa người dùng để dự đoán và phân tích có tương tác.
 **Khởi chạy GUI:**
 ```bash
 python app.py

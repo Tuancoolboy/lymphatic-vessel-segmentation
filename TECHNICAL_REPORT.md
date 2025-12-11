@@ -37,7 +37,7 @@ This report details the project's methodology, implementation, experimental resu
 
 ### **2. Project Background and Team Contribution**
 
-This work is a direct continuation of the project **"Deep learning in Medical Researches: Lymphatic Vessel Segmentation"**, which established a fully supervised pipeline for this task. Our project extends this foundation by integrating a semi-supervised learning paradigm to reduce the dependency on manually annotated data.
+This work is a direct continuation of the project **"Deep learning in Medical Researches: Lymphatic Vessel Segmentation"** ([Original Repository](https://github.com/TUng1872004/Lymphatic-vessel)), which established a fully supervised pipeline for this task. Our project extends this foundation by integrating a semi-supervised learning paradigm to reduce the dependency on manually annotated data.
 
 The interactive GUI application (`app.py`) was originally developed by **Vũ Hoàng Tùng** as part of the foundational project, and we have adapted it for our new pipeline. We extend our sincere gratitude for this significant contribution.
 

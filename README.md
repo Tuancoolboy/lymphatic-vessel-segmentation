@@ -37,7 +37,7 @@ This project was a collaborative effort between two members. The tasks were divi
  
 ## Project Background
 
-This work is a direct continuation of the project **"Deep learning in Medical Researches: Lymphatic Vessel Segmentation"**. The original project established a fully supervised pipeline and introduced foundational models like UNet++ for this task.
+This work is a direct continuation of the project **"Deep learning in Medical Researches: Lymphatic Vessel Segmentation"** ([Original Repository](https://github.com/TUng1872004/Lymphatic-vessel)). The original project established a fully supervised pipeline and introduced foundational models like UNet++ for this task.
 
 We extend this work by integrating a semi-supervised learning paradigm to reduce the dependency on manually annotated data. The interactive GUI application (`app.py`) was originally developed by **Vũ Hoàng Tùng** as part of the foundational project, and we have adapted it for our new pipeline. We extend our sincere gratitude for this significant contribution.
 
