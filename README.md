@@ -210,34 +210,34 @@ The training curves show the progression of the Dice score and loss, indicating 
 
 #### CTO-Net (Vanilla)
 **Human Dataset:**
-!CTO-Net Human Curves
+![CTO-Net Human Curves](Human/CTO-Net/training_curves.png)
 
 **Rat Dataset:**
-!CTO-Net Rat Curves
+![CTO-Net Rat Curves](Rat/CTO-Net/training_curves.png)
 
 #### CTO Stitch-ViT (Experimental)
 **Human Dataset:**
-!Stitch-ViT Human Curves
+![Stitch-ViT Human Curves](Human/CTO-Stitch-ViT/training_curves.png)
 
 **Rat Dataset:**
-!Stitch-ViT Rat Curves
+![Stitch-ViT Rat Curves](Rat/CTO-Stitch-ViT/training_curves.png)
 
 ### Prediction Quality
 Visual inspection shows a significant improvement from the baseline model to the final model. The final model produces much cleaner segmentations with fewer false positives.
 
 #### CTO-Net (Vanilla)
 **Human Dataset:**
-!CTO-Net Human Predictions
+![CTO-Net Human Predictions](Human/CTO-Net/final_predictions.png)
 
 **Rat Dataset:**
-!CTO-Net Rat Predictions
+![CTO-Net Rat Predictions](Rat/CTO-Net/final_predictions.png)
 
 #### CTO Stitch-ViT (Experimental)
 **Human Dataset:**
-!Stitch-ViT Human Predictions
+![Stitch-ViT Human Predictions](Human/CTO-Stitch-ViT/final_predictions.png)
 
 **Rat Dataset:**
-!Stitch-ViT Rat Predictions
+![Stitch-ViT Rat Predictions](Rat/CTO-Stitch-ViT/final_predictions.png)
 
 **Visual Analysis:**
 - **Baseline vs. Final:** In all cases, the final Stage 2 models produce significantly smoother and more coherent segmentations compared to their Stage 1 baselines. The consistency loss from the Mean Teacher method effectively reduces noise and fills in gaps.

@@ -209,38 +209,38 @@ Các biểu đồ huấn luyện cho thấy sự tiến triển của điểm Di
 
 #### CTO-Net (Vanilla)
 **Bộ dữ liệu Người:**
-!CTO-Net Human Curves
+![CTO-Net Human Curves](Human/CTO-Net/training_curves.png)
 
 **Bộ dữ liệu Chuột:**
-!CTO-Net Rat Curves
+![CTO-Net Rat Curves](Rat/CTO-Net/training_curves.png)
 
 #### CTO Stitch-ViT (Thử nghiệm)
 **Bộ dữ liệu Người:**
-!Stitch-ViT Human Curves
+![Stitch-ViT Human Curves](Human/CTO-Stitch-ViT/training_curves.png)
 
 **Bộ dữ liệu Chuột:**
-!Stitch-ViT Rat Curves
+![Stitch-ViT Rat Curves](Rat/CTO-Stitch-ViT/training_curves.png)
 
 ### Chất Lượng Dự Đoán
 Kiểm tra trực quan cho thấy sự cải thiện đáng kể từ mô hình cơ sở đến mô hình cuối cùng. Mô hình cuối cùng tạo ra các phân vùng sạch hơn nhiều với ít dương tính giả (false positives) hơn.
 
 #### CTO-Net (Vanilla)
 **Bộ dữ liệu Người:**
-!CTO-Net Human Predictions
+![CTO-Net Human Predictions](Human/CTO-Net/final_predictions.png)
 
 **Bộ dữ liệu Chuột:**
-!CTO-Net Rat Predictions
+![CTO-Net Rat Predictions](Rat/CTO-Net/final_predictions.png)
 
 #### CTO Stitch-ViT (Thử nghiệm)
 **Bộ dữ liệu Người:**
-!Stitch-ViT Human Predictions
+![Stitch-ViT Human Predictions](Human/CTO-Stitch-ViT/final_predictions.png)
 
 **Bộ dữ liệu Chuột:**
-!Stitch-ViT Rat Predictions
+![Stitch-ViT Rat Predictions](Rat/CTO-Stitch-ViT/final_predictions.png)
 
 **Phân tích trực quan:**
 - **Cơ sở vs. Cuối cùng:** Trong mọi trường hợp, các mô hình Giai đoạn 2 cuối cùng tạo ra các phân vùng mượt mà và mạch lạc hơn đáng kể so với các mô hình cơ sở Giai đoạn 1 của chúng. Consistency loss từ phương pháp Mean Teacher giúp giảm nhiễu và lấp đầy các khoảng trống một cách hiệu quả.
-- **So sánh mô hình:** Trên bộ dữ liệu Chuột, các dự đoán từ `CTO Stitch-ViT` có vẻ tự tin hơn và nắm bắt được các chi tiết tốt hơn dọc theo ranh giới mạch máu, phù hợp với điểm Boundary F1 cao hơn của nó. Trên bộ dữ liệu Người, `CTO-Net` cung cấp các mặt nạ sạch và chính xác.
+- **So sánh mô hình:** Trên bộ dữ liệu Chuột, các dự đoán từ `CTO Stitch-ViT` có vẻ khả quan hơn và nắm bắt được các chi tiết tốt hơn dọc theo ranh giới mạch máu, phù hợp với điểm Boundary F1 cao hơn của nó. Trên bộ dữ liệu Người, `CTO-Net` thì lại cung cấp các mặt nạ sạch và chính xác hơn.
 
 ## Phân Tích Dự Án: Thành Công và Hạn Chế
 
@@ -250,17 +250,17 @@ Kiểm tra trực quan cho thấy sự cải thiện đáng kể từ mô hình 
 3.  **Quy Trình End-to-End:** Dự án cung cấp một quy trình hoàn chỉnh, có thể sử dụng được, từ xử lý video thô, tạo mặt nạ, đến huấn luyện, đánh giá và phân tích tương tác với GUI.
 
 ### Hạn Chế
-1.  **Mô hình Stitch-ViT còn trong giai đoạn thử nghiệm:** Mô hình `cto_stitchvit` vẫn đang trong giai đoạn thử nghiệm. Mặc dù nó cho thấy tiềm năng trong việc nắm bắt ngữ cảnh toàn cục, nó đòi hỏi phải tinh chỉnh và đánh giá sâu hơn để chứng minh một cách chắc chắn lợi ích của nó so với CTO-Net tiêu chuẩn.
-2.  **Hiệu suất phụ thuộc vào bộ dữ liệu của Stitch-ViT:** Như đã lưu ý trong kết quả, lợi ích của `cto_stitchvit` dường như phụ thuộc vào bộ dữ liệu. Ưu điểm của nó đối với bộ dữ liệu Chuột là rõ ràng, nhưng nó không nhất thiết vượt trội hơn CTO-Net tiêu chuẩn trên bộ dữ liệu Người, cho thấy không có giải pháp nào phù hợp cho tất cả.
+1.  **Mô hình Stitch-ViT còn trong giai đoạn thử nghiệm:** Mô hình `cto_stitchvit` vẫn đang trong giai đoạn thử nghiệm. Mặc dù nó cho thấy tiềm năng trong việc nắm bắt ngữ cảnh toàn cục, nó đòi hỏi phải tinh chỉnh và đánh giá sâu hơn để xác minh một cách chắc chắn về lợi ích của nó so với CTO-Net tiêu chuẩn.
+2.  **Hiệu suất phụ thuộc vào bộ dữ liệu của Stitch-ViT:** Như đã lưu ý trong kết quả, lợi ích của `cto_stitchvit` dường như phụ thuộc vào bộ dữ liệu. Ưu điểm của nó đối với bộ dữ liệu Chuột là rõ ràng, nhưng nó không hoàn toàn vượt trội hơn CTO-Net tiêu chuẩn trên bộ dữ liệu Người, cho thấy không có giải pháp nào phù hợp cho tất cả.
 3.  **Phụ thuộc vào Nhãn Giả (Pseudo-Labels):** Hiệu suất của giai đoạn bán giám sát phụ thuộc nhiều vào chất lượng của các nhãn giả được tạo ra bởi teacher model. Trong trường hợp có sự khác biệt lớn (domain shift) giữa dữ liệu có nhãn và không nhãn, điều này có thể làm giảm hiệu suất.
 4.  **Chi Phí Tính Toán:** Quá trình huấn luyện hai giai đoạn, đặc biệt với số lượng lớn khung hình không nhãn, đòi hỏi nhiều tài nguyên tính toán và tốn thời gian.
 
 ## Những Gì Đã Học Được
 
-Dự án này đã mang lại kinh nghiệm thực tế quý báu trong một số lĩnh vực chính của học sâu và thị giác máy tính:
+Dự án này mang lại kinh nghiệm thực tế quý báu trong một số lĩnh vực chính của học sâu và thị giác máy tính:
 
 1.  **Học Bán Giám Sát:** Có được sự hiểu biết sâu sắc và thực tế về phương pháp Mean Teacher, bao gồm việc triển khai consistency loss và cập nhật trọng số bằng Trung bình Động Hàm mũ (EMA).
 2.  **Kiến Trúc Mô Hình Nâng Cao:** Học cách triển khai và tích hợp các kiến trúc phức tạp, bao gồm backbone đa tỷ lệ Res2Net và các khối Vision Transformer thử nghiệm.
 3.  **Kỹ Thuật Thiết Kế Hàm Loss:** Tích lũy kinh nghiệm trong việc thiết kế và cân bằng một hàm loss tổng hợp (BCE, Dice, Boundary) để tối ưu hóa cho các đặc điểm phân vùng cụ thể như độ sắc nét của các cạnh.
 4.  **Xây Dựng Quy Trình ML Hoàn Chỉnh:** Phát triển kỹ năng tạo ra một quy trình làm việc end-to-end, bao gồm tiền xử lý dữ liệu, huấn luyện mô hình, trực quan hóa kết quả và xây dựng một ứng dụng tương tác cho việc sử dụng trong thực tế.
-5.  **Tính Tái Tạo và Cấu Hình:** Học được tầm quan trọng của việc cấu trúc mã nguồn rõ ràng, tài liệu hóa đầy đủ và sử dụng các tệp cấu hình bên ngoài (`.json`) để đảm bảo các thí nghiệm dễ dàng tái tạo và sửa đổi.
+5.  **Tính Tái Tạo và Cấu Hình:** Học được tầm quan trọng của việc thiết lập cấu trúc mã nguồn rõ ràng, tài liệu hóa đầy đủ và sử dụng các tệp cấu hình bên ngoài (`.json`) để đảm bảo các thí nghiệm dễ dàng tái tạo và sửa đổi.

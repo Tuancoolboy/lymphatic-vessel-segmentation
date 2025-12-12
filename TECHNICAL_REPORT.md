@@ -163,11 +163,11 @@ The table below summarizes the final performance (Stage 2) of both **CTO-Net** a
 Visual inspection confirms the quantitative results. The final models (Stage 2) produce significantly cleaner and more coherent segmentations compared to their noisy Stage 1 counterparts.
 
 **CTO-Net vs. CTO Stitch-ViT on Rat Dataset:**
-!Rat Prediction Comparison
+![Rat Prediction Comparison](Rat/comparison.png)
 *Figure 2: Prediction comparison on the Rat dataset. Left: Ground Truth, Middle: CTO-Net, Right: CTO Stitch-ViT. The Stitch-ViT model captures finer boundary details, aligning with its higher Boundary F1 score.*
 
 **CTO-Net on Human Dataset:**
-!Human Prediction Comparison
+![Human Prediction Comparison](Human/CTO-Net/final_predictions.png)
 *Figure 3: Prediction comparison on the Human dataset. The standard CTO-Net provides clean and accurate masks, outperforming the experimental model.*
 
 **Visual Summary:**
