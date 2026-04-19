@@ -4,7 +4,14 @@ This project enhances and extends a foundational supervised learning pipeline by
 
 ## Demo Videos
 
+### Human
+Segmentation result on the human lymphatic vessel video.
+
 [![Human Demo](./Video/Human.gif)](./Video/Human.mov)
+
+### Rat
+Segmentation result on the rat lymphatic vessel video.
+
 [![Rat Demo](./Video/Rat.gif)](./Video/Rat.mov)
   
 **Project Resources (Dataset, Models, Results):** [Google Drive Link](https://drive.google.com/drive/folders/1ORzUm1P5PK35O_L4YQ2L_IgIZZbkXi-0)
