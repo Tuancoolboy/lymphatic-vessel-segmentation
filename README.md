@@ -4,8 +4,9 @@ This project enhances and extends a foundational supervised learning pipeline by
 
 ## Demo Videos
 
-- [Human video](./Video/Human.mov)
-- [Rat video](./Video/Rat.mov)
+[![Human Demo](./Video/human_preview.gif)](./Video/Human.mov)
+[![Rat Demo](./Video/rat_preview.gif)](./Video/Rat.mov)
+  
 **Project Resources (Dataset, Models, Results):** [Google Drive Link](https://drive.google.com/drive/folders/1ORzUm1P5PK35O_L4YQ2L_IgIZZbkXi-0)
 
 ## Table of Contents
